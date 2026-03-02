@@ -29,8 +29,8 @@
 </p>
 
 <p align="center">
-  <a href="README.md">🇨🇳 中文文档</a> |
-  <a href="README_EN.md">🇺🇸 English Document</a>
+  <a href="README.md">中文文档</a> |
+  <a href="README_EN.md">English Document</a>
 </p>
 
 > 本项目仅供学习和个人用途，请勿将其用于任何违法行为，否则后果自负。

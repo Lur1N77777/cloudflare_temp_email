@@ -65,6 +65,7 @@
 如果不使用 `BACKEND_TOML`，而是让 workflow 自动生成 `worker/wrangler.toml`，需要 Cloudflare `send_email` 发信能力时，请在 `Repository variables` 中设置：
 
 - `TEMP_MAIL_ENABLE_SEND_MAIL_BINDING=true`
+- `TEMP_MAIL_SEND_MAIL_REMOTE=true` 可选，用于 Cloudflare Email Service 发信，会生成 `{ name = "SEND_MAIL", remote = true }`
 - `TEMP_MAIL_SEND_MAIL_DOMAINS_JSON` 可选，用于限制可发信域名，例如 `["example.com"]`；不配置时允许所有已配置邮箱域名
 
 ## 如何配置自动更新

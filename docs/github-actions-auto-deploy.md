@@ -41,6 +41,7 @@
 - `TEMP_MAIL_RANDOM_SUBDOMAIN_DOMAINS_JSON`：允许随机子域名的基础域名
 - `TEMP_MAIL_USER_ROLES_JSON`：用户角色域名规则
 - `TEMP_MAIL_ENABLE_SEND_MAIL_BINDING`：是否在 Worker 中绑定 Cloudflare `send_email` 发信通道；需要发信时设为 `true`
+- `TEMP_MAIL_SEND_MAIL_REMOTE`：可选，设为 `true` 时生成 `{ name = "SEND_MAIL", remote = true }`，用于 Cloudflare Email Service 发信
 - `TEMP_MAIL_SEND_MAIL_DOMAINS_JSON`：可选，限制哪些发件域名可以走 `SEND_MAIL` binding；不配置时允许所有已配置邮箱域名
 
 ## 敏感变量处理

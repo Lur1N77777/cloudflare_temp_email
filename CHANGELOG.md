@@ -20,6 +20,7 @@
 
 - fix: |GitHub Actions| 自动生成 `worker/wrangler.toml` 时强制要求配置 `TEMP_MAIL_JWT_SECRET` 与 `TEMP_MAIL_ADMIN_PASSWORDS_JSON`，避免部署后覆盖 Worker 变量导致 `JWT_SECRET is not set` 或管理员密码丢失；同时补充自动部署说明文档
 - fix: |GitHub Actions| 自动生成 Worker 配置时支持恢复 Cloudflare `send_email` 发信绑定（`SEND_MAIL`），避免 Actions 部署后发信能力丢失；可通过 `TEMP_MAIL_ENABLE_SEND_MAIL_BINDING` 与 `TEMP_MAIL_SEND_MAIL_DOMAINS_JSON` 控制
+- fix: |GitHub Actions| `SEND_MAIL` binding 支持 `TEMP_MAIL_SEND_MAIL_REMOTE=true`，用于生成 Cloudflare Email Service 需要的 `remote = true` 配置
 - fix: |Frontend| 收窄地址管理相关弹窗宽度，并让地址表格在弹窗内部横向滚动，避免多地址场景撑宽弹窗
 - fix: |Frontend| 修复 `/open_api/settings` 未返回 `domains` 数组时前端设置初始化直接调用 `map()` 报 `undefined` 错误的问题，统一按空数组兜底处理
 - fix: |Frontend| 修复前端在 `jwt` / `auth` / `adminAuth` 等 localStorage 凭据为空字符串、字面量 `"undefined"` 或包含换行/控制符时，请求构造的 `Authorization` 等头部抛出 `Invalid character in header content` 导致前端所有接口报错的问题（issue #1000）。新增 `safeHeaderValue` / `safeBearerHeader` 工具，对全部认证头做 RFC 7230 校验，不安全的值直接跳过该头部，让 worker 走标准 401 而不是请求级崩溃

@@ -65,6 +65,7 @@ Then go to the repository page `Settings` -> `Secrets and variables` -> `Actions
 If you do not use `BACKEND_TOML` and let the workflow render `worker/wrangler.toml` automatically, set these `Repository variables` when you need Cloudflare `send_email` support:
 
 - `TEMP_MAIL_ENABLE_SEND_MAIL_BINDING=true`
+- `TEMP_MAIL_SEND_MAIL_REMOTE=true` is optional for Cloudflare Email Service sending and renders `{ name = "SEND_MAIL", remote = true }`
 - `TEMP_MAIL_SEND_MAIL_DOMAINS_JSON` is optional and restricts which sender domains can use the `SEND_MAIL` binding, for example `["example.com"]`; when omitted, all configured mailbox domains are allowed
 
 ## How to Configure Auto-Update

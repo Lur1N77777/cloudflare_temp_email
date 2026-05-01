@@ -132,7 +132,10 @@ def main() -> int:
     if toml_bool(env("TEMP_MAIL_ENABLE_SEND_MAIL_BINDING", "false")) == "true":
         lines.append("")
         lines.append("send_email = [")
-        lines.append('   { name = "SEND_MAIL" },')
+        if toml_bool(env("TEMP_MAIL_SEND_MAIL_REMOTE", "false")) == "true":
+            lines.append('   { name = "SEND_MAIL", remote = true },')
+        else:
+            lines.append('   { name = "SEND_MAIL" },')
         lines.append("]")
 
     cron = env("TEMP_MAIL_CRON")

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync_latest_from_upstream:
@@ -79,3 +80,9 @@ jobs:
           else
             echo "Already up to date."
           fi
+
+          echo "Triggering backend and frontend deployments on main."
+          gh workflow run backend_deploy.yaml --ref main
+          gh workflow run frontend_deploy.yaml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

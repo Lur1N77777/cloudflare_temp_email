@@ -41,6 +41,10 @@ jobs:
               ".github/workflows/sync.yaml"
               ".github/scripts/render-worker-toml.py"
               "docs/github-actions-auto-deploy.md"
+              "vitepress-docs/docs/zh/guide/actions/github-action.md"
+              "vitepress-docs/docs/en/guide/actions/github-action.md"
+              "CHANGELOG.md"
+              "CHANGELOG_EN.md"
             )
             for path in "${protected_paths[@]}"; do
               if git ls-files -u -- "$path" | grep -q .; then

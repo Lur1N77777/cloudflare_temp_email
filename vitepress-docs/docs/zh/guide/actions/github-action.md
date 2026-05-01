@@ -60,6 +60,13 @@
 - 如果需要前后端分离并直连 Worker, 找到 `Deploy Frontend`，点击 `Run workflow` 选择分支手动部署
 - 如果需要通过 Page Functions 转发后端请求的 Pages 部署, 找到 `Deploy Frontend with page function`，点击 `Run workflow` 手动部署
 
+### 自动生成 Worker 配置时的发信绑定
+
+如果不使用 `BACKEND_TOML`，而是让 workflow 自动生成 `worker/wrangler.toml`，需要 Cloudflare `send_email` 发信能力时，请在 `Repository variables` 中设置：
+
+- `TEMP_MAIL_ENABLE_SEND_MAIL_BINDING=true`
+- `TEMP_MAIL_SEND_MAIL_DOMAINS_JSON` 可选，用于限制可发信域名，例如 `["example.com"]`；不配置时允许所有已配置邮箱域名
+
 ## 如何配置自动更新
 
 1. 打开仓库的 `Actions` 页面，找到 `Upstream Sync`，点击 `enable workflow` 启用 `workflow`

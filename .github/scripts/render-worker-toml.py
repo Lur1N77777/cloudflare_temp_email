@@ -102,6 +102,7 @@ def main() -> int:
     domains = parse_json_array("TEMP_MAIL_DOMAINS_JSON") or parse_csv("TEMP_MAIL_DOMAINS")
     default_domains = parse_json_array("TEMP_MAIL_DEFAULT_DOMAINS_JSON") or parse_csv("TEMP_MAIL_DEFAULT_DOMAINS") or domains
     random_subdomain_domains = parse_json_array("TEMP_MAIL_RANDOM_SUBDOMAIN_DOMAINS_JSON") or parse_csv("TEMP_MAIL_RANDOM_SUBDOMAIN_DOMAINS")
+    send_mail_domains = parse_json_array("TEMP_MAIL_SEND_MAIL_DOMAINS_JSON") or parse_csv("TEMP_MAIL_SEND_MAIL_DOMAINS")
     domain_labels = parse_json_array("TEMP_MAIL_DOMAIN_LABELS_JSON")
     user_roles = parse_json_array("TEMP_MAIL_USER_ROLES_JSON")
 
@@ -127,6 +128,12 @@ def main() -> int:
         lines.append('directory = "../frontend/dist/"')
         lines.append('binding = "ASSETS"')
         lines.append("run_worker_first = true")
+
+    if toml_bool(env("TEMP_MAIL_ENABLE_SEND_MAIL_BINDING", "false")) == "true":
+        lines.append("")
+        lines.append("send_email = [")
+        lines.append('   { name = "SEND_MAIL" },')
+        lines.append("]")
 
     cron = env("TEMP_MAIL_CRON")
     if cron:
@@ -159,6 +166,7 @@ def main() -> int:
     add_var(lines, "USER_DEFAULT_ROLE", env("TEMP_MAIL_USER_DEFAULT_ROLE", "member"))
     add_var(lines, "USER_ROLES", user_roles)
     add_var(lines, "NO_LIMIT_SEND_ROLE", env("TEMP_MAIL_NO_LIMIT_SEND_ROLE", "admin"))
+    add_var(lines, "SEND_MAIL_DOMAINS", send_mail_domains)
     add_var(lines, "FRONTEND_URL", env("TEMP_MAIL_FRONTEND_URL"))
 
     # Required sensitive vars for generated config. Do not rely on keep_vars here:

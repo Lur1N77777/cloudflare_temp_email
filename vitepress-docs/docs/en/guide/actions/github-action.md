@@ -60,6 +60,13 @@ Then go to the repository page `Settings` -> `Secrets and variables` -> `Actions
 - If you need separate frontend and backend deployment that talks to Worker directly, find `Deploy Frontend` and click `Run workflow` to select a branch and deploy manually
 - If you need Pages deployment with Page Functions forwarding backend requests, find `Deploy Frontend with page function` and click `Run workflow` to deploy manually
 
+### Send-mail binding with generated Worker config
+
+If you do not use `BACKEND_TOML` and let the workflow render `worker/wrangler.toml` automatically, set these `Repository variables` when you need Cloudflare `send_email` support:
+
+- `TEMP_MAIL_ENABLE_SEND_MAIL_BINDING=true`
+- `TEMP_MAIL_SEND_MAIL_DOMAINS_JSON` is optional and restricts which sender domains can use the `SEND_MAIL` binding, for example `["example.com"]`; when omitted, all configured mailbox domains are allowed
+
 ## How to Configure Auto-Update
 
 1. Open the `Actions` page of the repository, find `Upstream Sync`, and click `enable workflow` to enable the `workflow`

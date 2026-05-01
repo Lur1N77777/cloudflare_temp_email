@@ -16,10 +16,44 @@ jobs:
     if: ${{ github.event.repository.fork }}
 
     steps:
-      - name: Sync upstream changes
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream changes
         run: |
-          gh repo sync "${{ github.repository }}" \
-            --source dreamhunter2333/cloudflare_temp_email \
-            --branch main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/dreamhunter2333/cloudflare_temp_email.git
+          git fetch upstream main
+
+          if git merge --no-edit upstream/main; then
+            echo "Upstream merged cleanly."
+          else
+            echo "Merge conflict detected. Preserving local GitHub Actions automation files and retrying."
+            protected_paths=(
+              ".github/workflows/backend_deploy.yaml"
+              ".github/workflows/frontend_deploy.yaml"
+              ".github/workflows/sync.yaml"
+              ".github/scripts/render-worker-toml.py"
+              "docs/github-actions-auto-deploy.md"
+            )
+            for path in "${protected_paths[@]}"; do
+              if git ls-files -u -- "$path" | grep -q .; then
+                git checkout --ours -- "$path"
+                git add "$path"
+              fi
+            done
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              echo "Unresolved conflicts remain:"
+              git diff --name-only --diff-filter=U
+              exit 1
+            fi
+            git commit --no-edit
+          fi
+
+          git push origin HEAD:main

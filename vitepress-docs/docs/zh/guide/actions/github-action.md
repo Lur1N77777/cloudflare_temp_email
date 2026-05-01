@@ -36,6 +36,10 @@
    | `TEMP_MAIL_JWT_SECRET`         | 当未配置 `BACKEND_TOML`、由 workflow 自动生成 `worker/wrangler.toml` 时必需。对应 Worker 的 `JWT_SECRET`，建议使用 `openssl rand -hex 32` 生成 |
    | `TEMP_MAIL_ADMIN_PASSWORDS_JSON` | 当未配置 `BACKEND_TOML`、由 workflow 自动生成 `worker/wrangler.toml` 时必需。管理员密码 JSON 数组，例如 `["123456"]` |
    | `TEMP_MAIL_PASSWORDS_JSON`      | (可选) 当未配置 `BACKEND_TOML`、由 workflow 自动生成 `worker/wrangler.toml` 时使用。站点访问密码 JSON 数组，例如 `["site-password"]` |
+   | `TEMP_MAIL_RESEND_TOKEN`        | (可选) 全局 Resend API Token，部署后会自动写入 Worker secret `RESEND_TOKEN` |
+   | `TEMP_MAIL_RESEND_TOKEN_<DOMAIN>` | (可选) 域名级 Resend API Token，例如 `TEMP_MAIL_RESEND_TOKEN_EXAMPLE_COM` 会写入 Worker secret `RESEND_TOKEN_EXAMPLE_COM`。域名需大写，`.` 替换为 `_` |
+   | `TEMP_MAIL_SMTP_CONFIG`         | (可选) SMTP JSON 配置，部署后会自动写入 Worker secret `SMTP_CONFIG` |
+   | `TEMP_MAIL_WORKER_SECRETS_JSON` | (可选) 额外 Worker secrets 的 JSON 对象，例如 `{"RESEND_TOKEN_EXAMPLE_COM":"..."}` |
    | `DEBUG_MODE`                   | (可选) 是否开启调试模式，配置为 `true` 开启, 默认 worker 部署日志不会输出到 Github Actions 页面，开启后会输出                           |
    | `BACKEND_USE_MAIL_WASM_PARSER` | (可选) 是否使用 wasm 解析邮件，配置为 `true` 开启, 功能参考 [配置 worker 使用 wasm 解析邮件](/zh/guide/feature/mail_parser_wasm_worker) |
    | `USE_WORKER_ASSETS`            | (可选) 部署带有前端资源的 Worker, 配置为 `true` 开启                                                                                    |
@@ -72,3 +76,5 @@
 
 1. 打开仓库的 `Actions` 页面，找到 `Upstream Sync`，点击 `enable workflow` 启用 `workflow`
 2. 如果 `Upstream Sync` 运行失败，到仓库主页点击 `Sync` 手动同步即可
+
+如果 fork 中有自定义的 GitHub Actions 自动部署配置，建议使用 merge 方式同步上游，而不是强制覆盖。当前 workflow 会自动 merge `dreamhunter2333/cloudflare_temp_email/main`，并优先保留本仓库的 Actions 配置文件，避免自动部署 secrets 写回逻辑被上游覆盖。

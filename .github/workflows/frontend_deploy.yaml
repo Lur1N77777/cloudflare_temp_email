@@ -12,6 +12,9 @@ on:
 jobs:
   deploy-frontend:
     runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -31,9 +34,25 @@ jobs:
         if: ${{ env.FRONTEND_NAME != '' }}
         run: |
           cd frontend/
-          echo "${{ secrets.FRONTEND_ENV }}" > .env.prod
           pnpm install --no-frozen-lockfile
-          export frontend_branch="${{ secrets.FRONTEND_BRANCH }}"
+          if [ -n "$FRONTEND_ENV_CONTENT" ]; then
+            printf '%s\n' "$FRONTEND_ENV_CONTENT" > .env.prod
+          else
+            api_base="$TEMP_MAIL_FRONTEND_API_BASE"
+            if [ -z "$api_base" ] && [ -n "$TEMP_MAIL_WORKER_ROUTE" ]; then
+              api_base="https://$TEMP_MAIL_WORKER_ROUTE"
+            fi
+            if [ -z "$api_base" ]; then
+              echo "FRONTEND_ENV is not set and TEMP_MAIL_FRONTEND_API_BASE/TEMP_MAIL_WORKER_ROUTE is empty."
+              echo "Please set FRONTEND_ENV secret or TEMP_MAIL_FRONTEND_API_BASE repository variable."
+              exit 1
+            fi
+            printf 'VITE_API_BASE=%s\nVITE_CF_WEB_ANALY_TOKEN=%s\nVITE_IS_TELEGRAM=false\n' "$api_base" "$VITE_CF_WEB_ANALY_TOKEN" > .env.prod
+          fi
+          echo "Frontend env preview:"
+          sed -E 's/(TOKEN=).*/\1/' .env.prod
+          pnpm exec wrangler pages project create "$FRONTEND_NAME" --production-branch production || true
+          export frontend_branch="$FRONTEND_BRANCH"
           if [ -n "$frontend_branch" ]; then
             echo "Deploying branch $frontend_branch"
             pnpm run deploy:actions --project-name=$FRONTEND_NAME --branch $frontend_branch
@@ -45,10 +64,18 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          FRONTEND_NAME: ${{ secrets.FRONTEND_NAME }}
+          FRONTEND_NAME: ${{ secrets.FRONTEND_NAME || vars.TEMP_MAIL_FRONTEND_NAME || 'cloudflare-temp-email' }}
+          FRONTEND_ENV_CONTENT: ${{ secrets.FRONTEND_ENV }}
+          FRONTEND_BRANCH: ${{ secrets.FRONTEND_BRANCH || vars.FRONTEND_BRANCH }}
+          TEMP_MAIL_FRONTEND_API_BASE: ${{ vars.TEMP_MAIL_FRONTEND_API_BASE }}
+          TEMP_MAIL_WORKER_ROUTE: ${{ vars.TEMP_MAIL_WORKER_ROUTE }}
+          VITE_CF_WEB_ANALY_TOKEN: ${{ secrets.VITE_CF_WEB_ANALY_TOKEN || vars.VITE_CF_WEB_ANALY_TOKEN }}
 
   deploy-telegram-frontend:
     runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v6

@@ -36,6 +36,10 @@ Then go to the repository page `Settings` -> `Secrets and variables` -> `Actions
    | `TEMP_MAIL_JWT_SECRET`         | Required when `BACKEND_TOML` is not set and the workflow renders `worker/wrangler.toml` automatically. This is the Worker's `JWT_SECRET`; generate one with `openssl rand -hex 32` |
    | `TEMP_MAIL_ADMIN_PASSWORDS_JSON` | Required when `BACKEND_TOML` is not set and the workflow renders `worker/wrangler.toml` automatically. Admin password JSON array, for example `["123456"]` |
    | `TEMP_MAIL_PASSWORDS_JSON`      | (Optional) Used when `BACKEND_TOML` is not set and the workflow renders `worker/wrangler.toml` automatically. Site password JSON array, for example `["site-password"]` |
+   | `TEMP_MAIL_RESEND_TOKEN`        | (Optional) Global Resend API Token. The workflow writes it back as Worker secret `RESEND_TOKEN` after each deployment |
+   | `TEMP_MAIL_RESEND_TOKEN_<DOMAIN>` | (Optional) Domain-specific Resend API Token. For example, `TEMP_MAIL_RESEND_TOKEN_EXAMPLE_COM` is written back as Worker secret `RESEND_TOKEN_EXAMPLE_COM`. Uppercase the domain and replace `.` with `_` |
+   | `TEMP_MAIL_SMTP_CONFIG`         | (Optional) SMTP JSON config. The workflow writes it back as Worker secret `SMTP_CONFIG` |
+   | `TEMP_MAIL_WORKER_SECRETS_JSON` | (Optional) Extra Worker secrets as a JSON object, for example `{"RESEND_TOKEN_EXAMPLE_COM":"..."}` |
    | `DEBUG_MODE`                   | (Optional) Whether to enable debug mode, set to `true` to enable. By default, worker deployment logs are not output to GitHub Actions page, enabling this will output them |
    | `BACKEND_USE_MAIL_WASM_PARSER` | (Optional) Whether to use WASM to parse emails, set to `true` to enable. For features, refer to [Configure Worker to use WASM Email Parser](/en/guide/feature/mail_parser_wasm_worker) |
    | `USE_WORKER_ASSETS`            | (Optional) Deploy Worker with frontend assets, set to `true` to enable                                                                         |
@@ -72,3 +76,5 @@ If you do not use `BACKEND_TOML` and let the workflow render `worker/wrangler.to
 
 1. Open the `Actions` page of the repository, find `Upstream Sync`, and click `enable workflow` to enable the `workflow`
 2. If `Upstream Sync` fails, go to the repository homepage and click `Sync` to synchronize manually
+
+If the fork contains custom GitHub Actions deployment logic, prefer merging upstream instead of force-overwriting it. This workflow merges `dreamhunter2333/cloudflare_temp_email/main` and preserves the fork's Actions files first, so the automatic deployment and Worker-secret write-back logic are not lost during upstream sync.

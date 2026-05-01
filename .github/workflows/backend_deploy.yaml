@@ -116,6 +116,49 @@ jobs:
               exit "$code"
             fi
           fi
+
+          secret_payload="$(mktemp)"
+          python - <<'PY' > "$secret_payload"
+          import json
+          import os
+          import sys
+
+          secrets = {}
+
+          direct_mappings = {
+              "TEMP_MAIL_RESEND_TOKEN": "RESEND_TOKEN",
+              "TEMP_MAIL_RESEND_TOKEN_LOVEN7_COM": "RESEND_TOKEN_LOVEN7_COM",
+              "TEMP_MAIL_RESEND_TOKEN_LMHZEQ_FUN": "RESEND_TOKEN_LMHZEQ_FUN",
+              "TEMP_MAIL_SMTP_CONFIG": "SMTP_CONFIG",
+          }
+          for env_name, worker_secret_name in direct_mappings.items():
+              value = os.environ.get(env_name, "").strip()
+              if value:
+                  secrets[worker_secret_name] = value
+
+          extra_json = os.environ.get("TEMP_MAIL_WORKER_SECRETS_JSON", "").strip()
+          if extra_json:
+              try:
+                  extra = json.loads(extra_json)
+              except Exception as exc:  # noqa: BLE001
+                  print(f"TEMP_MAIL_WORKER_SECRETS_JSON 解析失败: {exc}", file=sys.stderr)
+                  raise SystemExit(2) from exc
+              if not isinstance(extra, dict):
+                  print("TEMP_MAIL_WORKER_SECRETS_JSON 必须是 JSON 对象", file=sys.stderr)
+                  raise SystemExit(2)
+              for key, value in extra.items():
+                  if isinstance(key, str) and key and isinstance(value, str) and value:
+                      secrets[key] = value
+
+          print(json.dumps(secrets))
+          PY
+          if [ "$(jq 'length' "$secret_payload")" -gt 0 ]; then
+            echo "Uploading Worker secrets from GitHub Secrets"
+            pnpm exec wrangler secret bulk "$secret_payload"
+          else
+            echo "No optional Worker secrets configured"
+          fi
+          rm -f "$secret_payload"
           echo "Deployed for tag ${{ github.ref_name }}"
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -149,3 +192,8 @@ jobs:
           TEMP_MAIL_JWT_SECRET: ${{ secrets.TEMP_MAIL_JWT_SECRET }}
           TEMP_MAIL_ADMIN_PASSWORDS_JSON: ${{ secrets.TEMP_MAIL_ADMIN_PASSWORDS_JSON }}
           TEMP_MAIL_PASSWORDS_JSON: ${{ secrets.TEMP_MAIL_PASSWORDS_JSON }}
+          TEMP_MAIL_RESEND_TOKEN: ${{ secrets.TEMP_MAIL_RESEND_TOKEN }}
+          TEMP_MAIL_RESEND_TOKEN_LOVEN7_COM: ${{ secrets.TEMP_MAIL_RESEND_TOKEN_LOVEN7_COM }}
+          TEMP_MAIL_RESEND_TOKEN_LMHZEQ_FUN: ${{ secrets.TEMP_MAIL_RESEND_TOKEN_LMHZEQ_FUN }}
+          TEMP_MAIL_SMTP_CONFIG: ${{ secrets.TEMP_MAIL_SMTP_CONFIG }}
+          TEMP_MAIL_WORKER_SECRETS_JSON: ${{ secrets.TEMP_MAIL_WORKER_SECRETS_JSON }}

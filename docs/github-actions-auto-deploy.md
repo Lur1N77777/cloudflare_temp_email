@@ -24,6 +24,11 @@
 
 - `BACKEND_TOML`：如果你想完全手写 `worker/wrangler.toml`，可以配置这个 secret；配置后工作流会优先使用它。
 - `FRONTEND_ENV`：如果你想完全手写前端 `.env.prod`，可以配置这个 secret。
+- `TEMP_MAIL_RESEND_TOKEN_LOVEN7_COM`：`loven7.com` 的 Resend API Token，会在每次 Worker 部署后写入 Cloudflare Worker secret `RESEND_TOKEN_LOVEN7_COM`。
+- `TEMP_MAIL_RESEND_TOKEN_LMHZEQ_FUN`：`lmhzeq.fun` 的 Resend API Token，会在每次 Worker 部署后写入 Cloudflare Worker secret `RESEND_TOKEN_LMHZEQ_FUN`。
+- `TEMP_MAIL_RESEND_TOKEN`：可选，全局 Resend API Token，对应 Worker secret `RESEND_TOKEN`。
+- `TEMP_MAIL_SMTP_CONFIG`：可选，SMTP JSON 配置，对应 Worker secret `SMTP_CONFIG`。
+- `TEMP_MAIL_WORKER_SECRETS_JSON`：可选，额外 Worker secrets 的 JSON 对象，例如 `{"RESEND_TOKEN_EXAMPLE_COM":"..."}`。
 
 如果没有配置 `BACKEND_TOML`，当前工作流会自动生成 `wrangler.toml`，并通过 Cloudflare API 自动解析 D1 数据库。
 
@@ -61,3 +66,7 @@
 5. 之后每天会自动同步上游并触发部署。
 
 如果 `Deploy Backend` 提示账户下有多个 D1 数据库且找不到 `TEMP_MAIL_D1_NAME`，请把 `TEMP_MAIL_D1_NAME` 改成当前线上使用的 D1 数据库名称。
+
+## 自动同步策略
+
+`Upstream Sync` 现在不是强制覆盖，而是每天从 `dreamhunter2333/cloudflare_temp_email` 拉取 `main` 并 merge 到当前 fork。这样可以保留本仓库的 GitHub Actions 自动部署适配、Secrets 写回逻辑和本地文档，同时继续获得上游更新。若只在通用源码处发生复杂冲突，workflow 会失败并保留现场，避免误覆盖本地配置。

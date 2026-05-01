@@ -31,14 +31,29 @@ jobs:
           git remote add upstream https://github.com/dreamhunter2333/cloudflare_temp_email.git
           git fetch upstream main
 
-          if git merge --no-edit upstream/main; then
-            echo "Upstream merged cleanly."
-          else
+          ours_commit="$(git rev-parse HEAD)"
+          set +e
+          git merge --no-commit --no-ff upstream/main
+          merge_status=$?
+          set -e
+
+          if [ "$merge_status" -ne 0 ]; then
             echo "Merge conflict detected. Preserving local GitHub Actions automation files and retrying."
+          fi
+
+          # Keep this fork's workflow files. GitHub's default GITHUB_TOKEN cannot
+          # push upstream workflow-file changes without the extra workflow scope,
+          # and these files also contain local deployment/secrets write-back logic.
+          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+            for file in $(git ls-files .github/workflows); do
+              if ! git cat-file -e "$ours_commit:$file" 2>/dev/null; then
+                git rm -f "$file"
+              fi
+            done
+            git checkout "$ours_commit" -- .github/workflows
+            git add .github/workflows
+
             protected_paths=(
-              ".github/workflows/backend_deploy.yaml"
-              ".github/workflows/frontend_deploy.yaml"
-              ".github/workflows/sync.yaml"
               ".github/scripts/render-worker-toml.py"
               "docs/github-actions-auto-deploy.md"
               "vitepress-docs/docs/zh/guide/actions/github-action.md"
@@ -47,17 +62,20 @@ jobs:
               "CHANGELOG_EN.md"
             )
             for path in "${protected_paths[@]}"; do
-              if git ls-files -u -- "$path" | grep -q .; then
-                git checkout --ours -- "$path"
+              if git cat-file -e "$ours_commit:$path" 2>/dev/null; then
+                git checkout "$ours_commit" -- "$path"
                 git add "$path"
               fi
             done
+
             if git diff --name-only --diff-filter=U | grep -q .; then
               echo "Unresolved conflicts remain:"
               git diff --name-only --diff-filter=U
               exit 1
             fi
-            git commit --no-edit
-          fi
 
-          git push origin HEAD:main
+            git commit --no-edit
+            git push origin HEAD:main
+          else
+            echo "Already up to date."
+          fi

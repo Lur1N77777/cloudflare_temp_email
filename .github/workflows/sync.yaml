@@ -82,7 +82,7 @@ jobs:
           fi
 
           echo "Triggering backend and frontend deployments on main."
-          gh workflow run backend_deploy.yaml --ref main
-          gh workflow run frontend_deploy.yaml --ref main
+          gh workflow run -R "${{ github.repository }}" backend_deploy.yaml --ref main
+          gh workflow run -R "${{ github.repository }}" frontend_deploy.yaml --ref main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

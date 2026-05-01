@@ -33,6 +33,9 @@
    | 名称                           | 说明                                                                                                                                    |
    | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
    | `BACKEND_TOML`                 | 后端配置文件，[参考此处](/zh/guide/cli/worker.html#修改-wrangler-toml-配置文件)                                                         |
+   | `TEMP_MAIL_JWT_SECRET`         | 当未配置 `BACKEND_TOML`、由 workflow 自动生成 `worker/wrangler.toml` 时必需。对应 Worker 的 `JWT_SECRET`，建议使用 `openssl rand -hex 32` 生成 |
+   | `TEMP_MAIL_ADMIN_PASSWORDS_JSON` | 当未配置 `BACKEND_TOML`、由 workflow 自动生成 `worker/wrangler.toml` 时必需。管理员密码 JSON 数组，例如 `["123456"]` |
+   | `TEMP_MAIL_PASSWORDS_JSON`      | (可选) 当未配置 `BACKEND_TOML`、由 workflow 自动生成 `worker/wrangler.toml` 时使用。站点访问密码 JSON 数组，例如 `["site-password"]` |
    | `DEBUG_MODE`                   | (可选) 是否开启调试模式，配置为 `true` 开启, 默认 worker 部署日志不会输出到 Github Actions 页面，开启后会输出                           |
    | `BACKEND_USE_MAIL_WASM_PARSER` | (可选) 是否使用 wasm 解析邮件，配置为 `true` 开启, 功能参考 [配置 worker 使用 wasm 解析邮件](/zh/guide/feature/mail_parser_wasm_worker) |
    | `USE_WORKER_ASSETS`            | (可选) 部署带有前端资源的 Worker, 配置为 `true` 开启                                                                                    |

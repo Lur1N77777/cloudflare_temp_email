@@ -15,7 +15,12 @@
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
 
-可选但推荐：
+使用自动生成 `wrangler.toml` 时还必须配置：
+
+- `TEMP_MAIL_JWT_SECRET`：Worker 的 `JWT_SECRET`，建议使用 `openssl rand -hex 32` 生成。
+- `TEMP_MAIL_ADMIN_PASSWORDS_JSON`：管理员密码数组，例如 `["5277"]`。
+
+可选：
 
 - `BACKEND_TOML`：如果你想完全手写 `worker/wrangler.toml`，可以配置这个 secret；配置后工作流会优先使用它。
 - `FRONTEND_ENV`：如果你想完全手写前端 `.env.prod`，可以配置这个 secret。
@@ -38,19 +43,11 @@
 
 ## 敏感变量处理
 
-工作流生成的 `wrangler.toml` 默认不会写入：
+工作流生成的 `wrangler.toml` 会接管 Worker 的 `[vars]` 配置，因此不能只依赖 `keep_vars = true` 保存敏感运行变量。为了避免部署后出现 `JWT_SECRET is not set` 或管理员入口失效，当前配置要求把必要敏感项放进 GitHub Secrets：
 
-- `JWT_SECRET`
-- `ADMIN_PASSWORDS`
-- `PASSWORDS`
-
-原因是现有 Worker 已经配置了这些变量，`keep_vars = true` 会在部署时尽量保留现有值，避免更新后旧邮箱 JWT 失效或管理员密码被覆盖。
-
-如果之后需要从零部署或显式覆盖，可以新增这些 secrets：
-
-- `TEMP_MAIL_JWT_SECRET`
-- `TEMP_MAIL_ADMIN_PASSWORDS_JSON`，例如 `["123","456"]`
-- `TEMP_MAIL_PASSWORDS_JSON`，例如 `["site-password"]`
+- `TEMP_MAIL_JWT_SECRET`：必需。
+- `TEMP_MAIL_ADMIN_PASSWORDS_JSON`：必需，例如 `["5277"]`。
+- `TEMP_MAIL_PASSWORDS_JSON`：可选，只有需要站点访问密码时配置，例如 `["site-password"]`。
 
 ## 首次使用
 

@@ -33,6 +33,9 @@ Then go to the repository page `Settings` -> `Secrets and variables` -> `Actions
    | Name                           | Description                                                                                                                                    |
    | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
    | `BACKEND_TOML`                 | Backend configuration file, [see here](/en/guide/cli/worker.html#modify-wrangler-toml-configuration-file)                                      |
+   | `TEMP_MAIL_JWT_SECRET`         | Required when `BACKEND_TOML` is not set and the workflow renders `worker/wrangler.toml` automatically. This is the Worker's `JWT_SECRET`; generate one with `openssl rand -hex 32` |
+   | `TEMP_MAIL_ADMIN_PASSWORDS_JSON` | Required when `BACKEND_TOML` is not set and the workflow renders `worker/wrangler.toml` automatically. Admin password JSON array, for example `["123456"]` |
+   | `TEMP_MAIL_PASSWORDS_JSON`      | (Optional) Used when `BACKEND_TOML` is not set and the workflow renders `worker/wrangler.toml` automatically. Site password JSON array, for example `["site-password"]` |
    | `DEBUG_MODE`                   | (Optional) Whether to enable debug mode, set to `true` to enable. By default, worker deployment logs are not output to GitHub Actions page, enabling this will output them |
    | `BACKEND_USE_MAIL_WASM_PARSER` | (Optional) Whether to use WASM to parse emails, set to `true` to enable. For features, refer to [Configure Worker to use WASM Email Parser](/en/guide/feature/mail_parser_wasm_worker) |
    | `USE_WORKER_ASSETS`            | (Optional) Deploy Worker with frontend assets, set to `true` to enable                                                                         |

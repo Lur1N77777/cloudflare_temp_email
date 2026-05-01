@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Render worker/wrangler.toml for GitHub Actions deployment.
 
-This keeps sensitive values optional. If JWT/admin/site passwords are already
-configured on the existing Worker, `keep_vars = true` lets Cloudflare preserve
-those values during deploy. Explicit secrets can still be provided to override.
+The generated config owns the Worker `[vars]` section, so sensitive runtime
+values that must survive deployment are required as GitHub Secrets. Do not rely
+on `keep_vars = true` alone for JWT/admin password preservation.
 """
 from __future__ import annotations
 
@@ -35,6 +35,16 @@ def parse_csv(name: str) -> list[str]:
     if not raw:
         return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def require_secret(name: str, description: str) -> str:
+    value = env(name)
+    if not value:
+        raise SystemExit(
+            f"{name} 为空，自动生成 wrangler.toml 时必须配置 {description}。"
+            "请在 GitHub Repository secrets 中设置该值，或改用 BACKEND_TOML 完整接管 worker/wrangler.toml。"
+        )
+    return value
 
 
 def toml_string(value: Any) -> str:
@@ -124,6 +134,15 @@ def main() -> int:
         lines.append("[triggers]")
         lines.append(f"crons = [{toml_string(cron)}]")
 
+    jwt_secret = require_secret("TEMP_MAIL_JWT_SECRET", "JWT_SECRET")
+    admin_passwords = parse_json_array("TEMP_MAIL_ADMIN_PASSWORDS_JSON")
+    if not admin_passwords:
+        raise SystemExit(
+            "TEMP_MAIL_ADMIN_PASSWORDS_JSON 为空，自动生成 wrangler.toml 时必须配置至少一个管理员密码。"
+            "例如：[\"your-admin-password\"]。"
+        )
+    site_passwords = parse_json_array("TEMP_MAIL_PASSWORDS_JSON")
+
     lines.append("")
     lines.append("[vars]")
     add_var(lines, "PREFIX", env("TEMP_MAIL_PREFIX"), include_empty=True)
@@ -142,11 +161,11 @@ def main() -> int:
     add_var(lines, "NO_LIMIT_SEND_ROLE", env("TEMP_MAIL_NO_LIMIT_SEND_ROLE", "admin"))
     add_var(lines, "FRONTEND_URL", env("TEMP_MAIL_FRONTEND_URL"))
 
-    # Optional explicit sensitive overrides. Leave empty to preserve existing
-    # Worker vars through keep_vars=true.
-    add_var(lines, "JWT_SECRET", env("TEMP_MAIL_JWT_SECRET"))
-    add_var(lines, "ADMIN_PASSWORDS", parse_json_array("TEMP_MAIL_ADMIN_PASSWORDS_JSON"))
-    add_var(lines, "PASSWORDS", parse_json_array("TEMP_MAIL_PASSWORDS_JSON"))
+    # Required sensitive vars for generated config. Do not rely on keep_vars here:
+    # Wrangler-managed [vars] can replace existing dashboard variables during deploy.
+    add_var(lines, "JWT_SECRET", jwt_secret)
+    add_var(lines, "ADMIN_PASSWORDS", admin_passwords)
+    add_var(lines, "PASSWORDS", site_passwords)
 
     lines.append("")
     lines.append("[[d1_databases]]")

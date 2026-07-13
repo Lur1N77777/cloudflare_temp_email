@@ -48,8 +48,19 @@
 | `SEND_MAIL_DOMAINS`                   | JSON      | Restrict which sender domains can use the `SEND_MAIL` binding; when unset or empty, all domains are allowed                                                                                                     | `["example.com", "mail.example.com"]`     |
 
 > [!NOTE]
+> When `DEFAULT_DOMAINS` is unset or configured as an empty array, it falls back to `DOMAINS`.
+>
 > `RANDOM_SUBDOMAIN_DOMAINS` only controls automatic random subdomain generation during mailbox
 > creation. It does not create Cloudflare-side subdomain routing for you.
+>
+> To actually receive mail on addresses like `name@<random>.abc.com`, **you must add a wildcard
+> `*` MX record under the base domain in DNS** by copying the apex's existing MX records to
+> host `*` (preserving each record's priority and target). Cloudflare Email Routing does not
+> inherit the apex configuration onto subdomains — see the
+> [Cloudflare Email Routing — Subdomains](https://developers.cloudflare.com/email-routing/setup/subdomains/)
+> docs,
+> [#1035](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/1035) and
+> [Configure Subdomain Email](/en/guide/feature/subdomain).
 >
 > Subdomain addresses are usually best used for receiving only; for sending, prefer the main
 > domain.
@@ -128,7 +139,7 @@
 
 > [!NOTE] USER_ROLES User Role Configuration
 >
-> - If `domains` is empty, `DEFAULT_DOMAINS` will be used
+> - If `domains` is empty, `DEFAULT_DOMAINS` will be used; if `DEFAULT_DOMAINS` is also empty, it falls back to `DOMAINS`
 > - If prefix is null, the default prefix will be used, if prefix is an empty string, no prefix will be used
 >
 > When deploying through UI, configure `USER_ROLES` in this format: `[{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"vip","prefix":"vip"},{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"admin","prefix":""}]`
@@ -145,7 +156,8 @@
 | `ALWAYS_SHOW_ANNOUNCEMENT` | Text/JSON   | Whether to always show announcement (even if unchanged), default `false` | `true`                |
 | `COPYRIGHT`                | Text        | Custom frontend footer text, supports html                               | `Dream Hunter`        |
 | `ADMIN_CONTACT`            | Text        | Admin contact information, can be any string, hidden if not configured   | `xxx@gmail.com`       |
-| `DISABLE_SHOW_GITHUB`      | Text/JSON   | Whether to show GitHub link                                              | `true`                |
+| `DISABLE_SHOW_GITHUB`      | Text/JSON   | Globally hide the GitHub link                                            | `true`                |
+| `DISABLE_SHOW_GITHUB_FOR_USER` | Text/JSON | Hide the GitHub link for normal users while keeping it visible to admin users | `true`                |
 | `STATUS_URL`               | Text        | Status monitoring page URL, shows Status menu button when configured     | `https://status.example.com` |
 | `CF_TURNSTILE_SITE_KEY`    | Text/Secret | Turnstile CAPTCHA configuration (for new address creation, registration code, etc.) | `xxx`                 |
 | `CF_TURNSTILE_SECRET_KEY`  | Text/Secret | Turnstile CAPTCHA configuration (for new address creation, registration code, etc.) | `xxx`                 |

@@ -42,6 +42,10 @@ export const MESSAGE_REGISTRY = {
       "en": "Auto Refresh",
       "zh": "自动刷新"
     },
+    "backToList": {
+      "en": "Back to List",
+      "zh": "返回列表"
+    },
     "cancelMultiAction": {
       "en": "Cancel Multi Action",
       "zh": "取消多选"
@@ -2001,8 +2005,8 @@ export const MESSAGE_REGISTRY = {
       "zh": "打开即可自动登录邮箱的链接"
     },
     "randomSubdomainTip": {
-      "en": "When enabled, the created address will use a random subdomain. Subdomain addresses are recommended for receiving only.",
-      "zh": "启用后，创建出来的地址会自动挂在随机子域名下。子域名地址更建议仅用于收件。"
+      "en": "When enabled, the created address will use a random subdomain. Recommended for receiving only. Requires a wildcard MX DNS record on the base domain — see the random subdomain docs.",
+      "zh": "启用后，创建出来的地址会自动挂在随机子域名下，建议仅用于收件。需要在基础域名 DNS 中配置通配 MX 记录，详见随机子域名文档。"
     },
     "successTip": {
       "en": "Success Created",
@@ -2107,8 +2111,20 @@ export const MESSAGE_REGISTRY = {
       "zh": "左侧"
     },
     "mailboxSplitSize": {
-      "en": "Mailbox Split Size",
-      "zh": "邮箱界面分栏大小"
+      "en": "Left list width in two-column mailbox view",
+      "zh": "邮箱双栏视图左侧列表宽度占比"
+    },
+    "mailListView": {
+      "en": "Full-width mailbox list view",
+      "zh": "邮箱全宽列表视图"
+    },
+    "mailListPreviewLineClamp": {
+      "en": "Body Preview Lines",
+      "zh": "正文预览行数"
+    },
+    "off": {
+      "en": "Off",
+      "zh": "关闭"
     },
     "preferShowTextMail": {
       "en": "Display text Mail by default",
@@ -2523,8 +2539,8 @@ export const MESSAGE_REGISTRY = {
       "zh": "请\"登录\"或点击 \"注册新邮箱\" 按钮来获取一个新的邮箱地址"
     },
     "randomSubdomainTip": {
-      "en": "When enabled, the created address will use a random subdomain. Subdomain addresses are recommended for receiving only.",
-      "zh": "启用后，创建出来的地址会自动挂在随机子域名下。子域名地址更建议仅用于收件。"
+      "en": "When enabled, the created address will use a random subdomain. Recommended for receiving only. Requires a wildcard MX DNS record on the base domain — see the random subdomain docs.",
+      "zh": "启用后，创建出来的地址会自动挂在随机子域名下，建议仅用于收件。需要在基础域名 DNS 中配置通配 MX 记录，详见随机子域名文档。"
     }
   },
   "views.admin.Webhook": {

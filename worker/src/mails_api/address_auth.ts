@@ -11,6 +11,7 @@ import {
     checkLoginThrottle,
     clearAccountLoginFailures,
     recordLoginFailure,
+    releaseLoginReservations,
 } from '../security/login_throttle';
 
 export default {
@@ -87,54 +88,70 @@ export default {
             return c.text('Too many login attempts', 429);
         }
 
-        // 查找地址
-        const address = await c.env.DB.prepare(
-            `SELECT * FROM address WHERE name = ?`
-        ).bind(email).first<{
-            id: number;
-            name: string;
-            password: string | null;
-            token_version?: number;
-        }>();
+        let throttleFinalized = false;
+        try {
+            // 查找地址
+            const address = await c.env.DB.prepare(
+                `SELECT * FROM address WHERE name = ?`
+            ).bind(email).first<{
+                id: number;
+                name: string;
+                password: string | null;
+                token_version?: number;
+            }>();
 
-        if (!address?.password) {
-            await recordLoginFailure(c, 'address', String(email));
-            return c.text(msgs.InvalidEmailOrPasswordMsg, 401);
-        }
-
-        const passwordResult = await verifyUserPassword(address.password, password);
-        if (!passwordResult.valid) {
-            await recordLoginFailure(c, 'address', String(email));
-            return c.text(msgs.InvalidEmailOrPasswordMsg, 401);
-        }
-        if (passwordResult.needsUpgrade) {
-            const upgradedPassword = await hashUserPassword(password);
-            const upgradeResult = await c.env.DB.prepare(
-                `UPDATE address SET password = ?, updated_at = datetime('now')`
-                + ` WHERE id = ? AND password = ? AND token_version = ?`
-            ).bind(
-                upgradedPassword,
-                address.id,
-                address.password,
-                address.token_version ?? 0,
-            ).run();
-            if (!upgradeResult.success || upgradeResult.meta.changes !== 1) {
+            if (!address?.password) {
                 await recordLoginFailure(c, 'address', String(email));
+                throttleFinalized = true;
                 return c.text(msgs.InvalidEmailOrPasswordMsg, 401);
             }
+
+            const passwordResult = await verifyUserPassword(address.password, password);
+            if (!passwordResult.valid) {
+                await recordLoginFailure(c, 'address', String(email));
+                throttleFinalized = true;
+                return c.text(msgs.InvalidEmailOrPasswordMsg, 401);
+            }
+            if (passwordResult.needsUpgrade) {
+                const upgradedPassword = await hashUserPassword(password);
+                const upgradeResult = await c.env.DB.prepare(
+                    `UPDATE address SET password = ?, updated_at = datetime('now')`
+                    + ` WHERE id = ? AND password = ? AND token_version = ?`
+                ).bind(
+                    upgradedPassword,
+                    address.id,
+                    address.password,
+                    address.token_version ?? 0,
+                ).run();
+                if (!upgradeResult.success || upgradeResult.meta.changes !== 1) {
+                    await recordLoginFailure(c, 'address', String(email));
+                    throttleFinalized = true;
+                    return c.text(msgs.InvalidEmailOrPasswordMsg, 401);
+                }
+            }
+            await clearAccountLoginFailures(c, 'address', String(email));
+            throttleFinalized = true;
+
+            // 创建JWT
+            const jwt = await Jwt.sign(buildAddressTokenPayload({
+                id: address.id,
+                name: address.name,
+                token_version: address.token_version ?? 0,
+            }), c.env.JWT_SECRET, "HS256");
+
+            return c.json({
+                jwt: jwt,
+                address: address.name
+            });
+        } catch (error) {
+            if (!throttleFinalized) {
+                try {
+                    await releaseLoginReservations(c, 'address', String(email));
+                } catch {
+                    console.error('Failed to release address login throttle reservation');
+                }
+            }
+            throw error;
         }
-        await clearAccountLoginFailures(c, 'address', String(email));
-
-        // 创建JWT
-        const jwt = await Jwt.sign(buildAddressTokenPayload({
-            id: address.id,
-            name: address.name,
-            token_version: address.token_version ?? 0,
-        }), c.env.JWT_SECRET, "HS256");
-
-        return c.json({
-            jwt: jwt,
-            address: address.name
-        });
     }
 };

@@ -156,6 +156,20 @@ export const recordLoginFailure = async (
     }
 };
 
+export const releaseLoginReservations = async (
+    c: Context<HonoCustomType>,
+    scope: 'user' | 'address',
+    account: string,
+): Promise<void> => {
+    const keys = await getKeys(c, scope, account);
+    const results = await c.env.DB.batch(keys.map((key) => c.env.DB.prepare(
+        LOGIN_SUCCESS_FINALIZE_SQL
+    ).bind(key)));
+    if (!results.every((result) => result.success)) {
+        throw new Error('Failed to release login throttling state');
+    }
+};
+
 export const clearAccountLoginFailures = async (
     c: Context<HonoCustomType>,
     scope: 'user' | 'address',

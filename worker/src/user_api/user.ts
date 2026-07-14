@@ -27,6 +27,7 @@ import {
     checkLoginThrottle,
     clearAccountLoginFailures,
     recordLoginFailure,
+    releaseLoginReservations,
 } from '../security/login_throttle';
 import {
     buildUserTokenPayload,
@@ -322,41 +323,57 @@ export default {
             c.header('retry-after', String(throttle.retryAfter));
             return c.text('Too many login attempts', 429);
         }
-        const user = await c.env.DB.prepare(
-            `SELECT id, user_email, password, token_version FROM users`
-            + ` WHERE user_email = ? COLLATE NOCASE`
-        ).bind(email).first<{
-            id: number;
-            user_email: string;
-            password: string;
-            token_version: number;
-        }>();
-        if (!user?.password) {
-            await recordLoginFailure(c, 'user', email);
-            return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
-        }
-
-        const passwordResult = await verifyUserPassword(user.password, password);
-        if (!passwordResult.valid) {
-            await recordLoginFailure(c, 'user', email);
-            return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
-        }
-        if (passwordResult.needsUpgrade) {
-            const upgradedPassword = await hashUserPassword(password);
-            const upgradeResult = await c.env.DB.prepare(
-                `UPDATE users SET password = ?, updated_at = datetime('now')`
-                + ` WHERE id = ? AND password = ? AND token_version = ?`
-            ).bind(upgradedPassword, user.id, user.password, user.token_version).run();
-            if (!upgradeResult.success || upgradeResult.meta.changes !== 1) {
+        let throttleFinalized = false;
+        try {
+            const user = await c.env.DB.prepare(
+                `SELECT id, user_email, password, token_version FROM users`
+                + ` WHERE user_email = ? COLLATE NOCASE`
+            ).bind(email).first<{
+                id: number;
+                user_email: string;
+                password: string;
+                token_version: number;
+            }>();
+            if (!user?.password) {
                 await recordLoginFailure(c, 'user', email);
+                throttleFinalized = true;
                 return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
             }
-        }
-        await clearAccountLoginFailures(c, 'user', email);
 
-        const authUser = await loadUserAuthRecord(c.env.DB, user.id);
-        if (!authUser) return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
-        const jwt = await issueUserJwt(c, authUser);
-        return c.json({ jwt });
+            const passwordResult = await verifyUserPassword(user.password, password);
+            if (!passwordResult.valid) {
+                await recordLoginFailure(c, 'user', email);
+                throttleFinalized = true;
+                return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
+            }
+            if (passwordResult.needsUpgrade) {
+                const upgradedPassword = await hashUserPassword(password);
+                const upgradeResult = await c.env.DB.prepare(
+                    `UPDATE users SET password = ?, updated_at = datetime('now')`
+                    + ` WHERE id = ? AND password = ? AND token_version = ?`
+                ).bind(upgradedPassword, user.id, user.password, user.token_version).run();
+                if (!upgradeResult.success || upgradeResult.meta.changes !== 1) {
+                    await recordLoginFailure(c, 'user', email);
+                    throttleFinalized = true;
+                    return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
+                }
+            }
+            await clearAccountLoginFailures(c, 'user', email);
+            throttleFinalized = true;
+
+            const authUser = await loadUserAuthRecord(c.env.DB, user.id);
+            if (!authUser) return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
+            const jwt = await issueUserJwt(c, authUser);
+            return c.json({ jwt });
+        } catch (error) {
+            if (!throttleFinalized) {
+                try {
+                    await releaseLoginReservations(c, 'user', email);
+                } catch {
+                    console.error('Failed to release user login throttle reservation');
+                }
+            }
+            throw error;
+        }
     },
 }

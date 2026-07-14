@@ -2,7 +2,8 @@ const PASSWORD_HASH_ALGORITHM = 'PBKDF2';
 const PASSWORD_HASH_DIGEST = 'SHA-256';
 const PASSWORD_HASH_PREFIX = 'pbkdf2-sha256';
 const PASSWORD_HASH_VERSION = 1;
-const PASSWORD_HASH_ITERATIONS = 310_000;
+// Cloudflare Workers rejects PBKDF2 requests above 100,000 iterations.
+export const PASSWORD_HASH_ITERATIONS = 100_000;
 const PASSWORD_SALT_BYTES = 16;
 const PASSWORD_HASH_BYTES = 32;
 

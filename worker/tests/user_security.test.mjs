@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
+    PASSWORD_HASH_ITERATIONS,
     hashUserPassword,
     isPasswordHash,
     verifyUserPassword,
@@ -15,6 +16,10 @@ import {
     generateRegistrationCode,
     normalizeUserEmail,
 } from '../src/user_api/registration_security.ts';
+
+test('PBKDF2 work factor stays within the Cloudflare Workers runtime limit', () => {
+    assert.equal(PASSWORD_HASH_ITERATIONS, 100_000);
+});
 
 test('PBKDF2 password hashes are salted, versioned and not replayable', async () => {
     const suppliedPassword = 'a'.repeat(64);

@@ -65,5 +65,7 @@ test('both password handlers record failures and clear the account key on succes
         assert.match(source, /checkLoginThrottle\(/);
         assert.match(source, /recordLoginFailure\(/);
         assert.match(source, /clearAccountLoginFailures\(/);
+        assert.match(source, /releaseLoginReservations\(/);
+        assert.match(source, /catch \(error\)/);
     }
 });

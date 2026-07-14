@@ -2,6 +2,7 @@ import { Context } from 'hono'
 
 import { CONSTANTS } from '../constants'
 import { getJsonSetting, getIntValue, getSplitStringListValue } from '../utils'
+import { SEND_BALANCE_RELEASE_SQL, SEND_BALANCE_RESERVE_SQL } from './send_reservation_sql'
 
 const ensureDefaultSendBalance = async (
     c: Context<HonoCustomType>,
@@ -30,6 +31,24 @@ export const getEnabledSendBalance = async (
         `SELECT balance FROM address_sender where address = ? and enabled = 1`
     ).bind(address).first<number>("balance");
     return typeof balance === "number" ? balance : null;
+}
+
+export const reserveSendBalance = async (
+    c: Context<HonoCustomType>,
+    address: string,
+): Promise<boolean> => {
+    const result = await c.env.DB.prepare(SEND_BALANCE_RESERVE_SQL).bind(address).run();
+    return result.success && result.meta.changes === 1;
+}
+
+export const releaseSendBalance = async (
+    c: Context<HonoCustomType>,
+    address: string,
+): Promise<void> => {
+    const result = await c.env.DB.prepare(SEND_BALANCE_RELEASE_SQL).bind(address).run();
+    if (!result.success || result.meta.changes !== 1) {
+        console.error(`Failed to release reserved send balance for ${address}`);
+    }
 }
 
 export const getSendBalanceState = async (

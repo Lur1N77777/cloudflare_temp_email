@@ -26,11 +26,14 @@ export default {
     },
     deleteMail: async (c: Context<HonoCustomType>) => {
         const { id } = c.req.param();
-        const { success } = await c.env.DB.prepare(
-            `DELETE FROM raw_mails WHERE id = ? `
-        ).bind(id).run();
+        const results = await c.env.DB.batch([
+            c.env.DB.prepare(
+                `DELETE FROM mail_flags WHERE mailbox = 'INBOX' AND mail_id = ?`
+            ).bind(id),
+            c.env.DB.prepare(`DELETE FROM raw_mails WHERE id = ?`).bind(id),
+        ]);
         return c.json({
-            success: success
+            success: results.every((result) => result.success)
         })
     }
 }

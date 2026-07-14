@@ -7,11 +7,13 @@ import AdminContact from '../common/AdminContact.vue'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
+import { createOutboundIdempotencyTracker } from '../../utils/outboundIdempotency'
 
 const message = useMessage()
 const isPreview = ref(false)
 const editorRef = shallowRef()
 const sending = ref(false)
+const outboundRequests = createOutboundIdempotencyTracker()
 
 
 const { settings, sendMailModel, indexTab, userSettings } = useGlobalState()
@@ -82,14 +84,19 @@ const send = async () => {
         is_html: sendMailModel.value.contentType != 'text',
         content,
     }
+    const attempt = outboundRequests.begin('/api/send_mail', payload)
 
     sending.value = true
     try {
         await api.fetch(`/api/send_mail`,
             {
                 method: 'POST',
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    ...payload,
+                    idempotency_key: attempt.key,
+                })
             })
+        outboundRequests.succeeded(attempt)
         sendMailModel.value = {
             fromName: "",
             toName: "",
@@ -102,6 +109,7 @@ const send = async () => {
         message.success(t("successSend"));
         indexTab.value = 'sendbox'
     } catch (error) {
+        outboundRequests.failed(attempt, error)
         message.error(error.message || "error");
     } finally {
         sending.value = false

@@ -19,6 +19,71 @@ res = requests.get(
 
 **Note**: `/api/mails` returns raw RFC822 data by design (for example `source`/`raw`), and it does not guarantee parsed fields such as `subject`, `text`, or `html`. Parse the raw source on the client side (for example with `mail-parser-wasm` or `postal-mime`) if you need readable message content.
 
+## Cursor, Batch Detail, and Mail Flag APIs
+
+All three endpoints below are address-scoped `/api/*` endpoints. They require the current mailbox's **Address JWT**, not a User JWT:
+
+```http
+Authorization: Bearer <address-jwt>
+```
+
+Also send `x-custom-auth` when the private-site password is enabled. The `mailbox` value is optional on all three endpoints (default `INBOX`) and accepts only `INBOX` or `SENT`, case-insensitively.
+
+### `GET /api/mail_ids`
+
+Returns a lightweight index in descending ID order with a stable keyset cursor, suitable for incremental sync and IMAP:
+
+```http
+GET /api/mail_ids?mailbox=INBOX&limit=100&before_id=12345
+```
+
+| Parameter | Rules |
+| --- | --- |
+| `mailbox` | Optional; `INBOX` or `SENT`, default `INBOX` |
+| `limit` | Optional, default `100`; must be an integer from `1` through `200` |
+| `before_id` | Optional; must be a positive safe integer and returns only rows with `id < before_id` |
+
+The response contains `results`, `count`, `next_cursor`, and `has_more`. When another page exists, pass `next_cursor` unchanged as the next request's `before_id`; do not derive an offset. Only the first request without `before_id` calculates the mailbox total, while later pages return `count: 0`. Lightweight `SENT` rows come from the sendbox, so their `message_id`, `source`, and `metadata` fields are `null`.
+
+### `GET /api/mail_details`
+
+Fetches details for IDs owned by the authenticated address:
+
+```http
+GET /api/mail_details?mailbox=SENT&mail_ids=321,320
+```
+
+`mail_ids` is a required comma-separated list of 1 to 10 IDs. Every ID must be a unique positive safe integer. `INBOX` returns decompressed `raw_mails` rows and `SENT` returns `sendbox` rows; IDs not owned by the Address JWT's mailbox are not returned.
+
+### `GET /api/mail_flags`
+
+Reads persistent system flags for the authenticated address:
+
+```http
+GET /api/mail_flags?mailbox=INBOX&mail_ids=321,320
+```
+
+`mail_ids` must contain 1 to 90 unique positive safe integers. A response looks like `{ "results": [{ "mail_id": 321, "flags": ["\\Seen"] }] }`; an omitted ID has no stored flags yet.
+
+### `PATCH /api/mail_flags`
+
+Updates at most 40 mails per request. Every `mail_id` must be unique and owned by the Address JWT's address:
+
+```json
+{
+  "mailbox": "SENT",
+  "updates": [
+    {
+      "mail_id": 321,
+      "operation": "add",
+      "flags": ["\\Seen", "\\Flagged"]
+    }
+  ]
+}
+```
+
+`operation` may be omitted (default `replace`) or set to `replace`, `add`, or `remove`. `flags` only accepts `\Seen`, `\Answered`, `\Flagged`, `\Deleted`, and `\Draft`. If any ID is not owned by the authenticated address, the whole request returns `404` without updating the other mails.
+
 ## Admin Mail API
 
 Supports `address` filter

@@ -12,6 +12,9 @@
 
 - feat: |Frontend| Add a "Full-width mailbox list view" toggle in Appearance settings. When enabled, the mailbox shows a full-width list of subjects and body previews by default; clicking a mail expands it into the two-pane split view, clicking the same mail again returns to the list view; in multi-select mode, clicking a mail updates both its checked state and the right-side preview while disabling same-mail collapse, and the split width still follows the "Left list width in two-column mailbox view" setting. Defaults to off, preserving the original two-pane behavior
 - feat: |Frontend| Add "Body Preview Lines" in Appearance settings for the full-width mailbox list view, allowing runtime control over the body-preview clamp. It defaults to 2 lines, and 0 disables previews
+- perf: |User registration| Upgrade registration verification emails to a branded bilingual Loven7 Mail template with a prominent code card, five-minute expiry and security guidance, plus a plain-text alternative for HTML messages
+- feat: |Authentication| Add `typ`, `sub`, `exp`, and database-backed `token_version` validation to Address and User JWTs; changing an address password or resetting a user password now revokes old tokens immediately while preserving compatibility for version-0 credentials that have not been rotated
+- feat: |Mail API / IMAP| Add bounded `/api/mail_ids`, `/api/mail_details`, and `/api/mail_flags` endpoints with consistent `INBOX` / `SENT` support, stable cursors, and persistent system flags; IMAP now uses lightweight cursor pages and batched details instead of offset-scanning the full mailbox, and can access sent items
 
 ### Bug Fixes
 
@@ -19,6 +22,16 @@
 - fix: |AI Extract| Strengthen the prompt to keep original link domains from the email, preventing small models from rewriting verification-link domains (issue #1072)
 - fix: |AI Extract| Convert HTML-only mail bodies into compact readable text before sending them to Workers AI, preventing long templates from pushing verification codes past the 4000-character truncation window
 - fix: |Frontend| Add mobile Header page padding so the title and menu button no longer sit too close to the screen edge
+- fix: |Dependency security| Upgrade frontend Vite from 7.3.5 to 7.3.6 and pin the transitive esbuild dependency to 0.28.1, resolving GHSA-g7r4-m6w7-qqqr (arbitrary local-file reads through the Windows development server, low); `pnpm audit` reports 0 findings after the upgrade
+- fix: |Authentication security| Store user and address passwords with randomly salted server-side PBKDF2-SHA256 and progressively upgrade legacy values after a successful login; add D1-backed account/IP backoff to both password login paths and use uniform failure responses to reduce account enumeration
+- fix: |User registration| Generate verification codes with Web Crypto CSPRNG and atomically reserve and consume one-time D1 challenges; canonicalize email identity case-insensitively, reject existing users before any verification mail is sent, and batch the user, default role, and challenge changes for consistency
+- fix: |Outbound mail| Add a payload-bound idempotency ledger to `/api/send_mail`, `/external/api/send_mail`, and admin send paths; conditionally reserve balances and daily/monthly quotas atomically and compensate provider failures, preventing concurrent retries from duplicating delivery, charging twice, or producing a negative balance
+- fix: |Inbound mail| Add deterministic `delivery_key` values and a D1 unique constraint for atomic delivery deduplication; persistence failures now produce temporary delivery failures so upstream can retry instead of permanently rejecting a recoverable error
+- fix: |Error handling| Return sanitized top-level Worker 500 responses with request IDs, and stop exposing provider or internal error details from public and external send endpoints
+
+### Testing
+
+- test: |Worker| Add regression coverage for credential rotation, PBKDF2, registration challenges, duplicate-registration blocking, login throttling, outbound idempotency and quota reservation, inbound retry deduplication, `INBOX` / `SENT` cursors, mail flags, and the top-level error boundary
 
 ### Improvements
 
@@ -43,8 +56,6 @@
 - fix: |AI Extract| Switch the default Workers AI model for AI email recognition to the JSON Mode-compatible, non-deprecated `@cf/meta/llama-3.1-8b-instruct-fast`, and document structured-output compatibility guidance for `@cf/zai-org/glm-4.7-flash` (issue #1029)
 - fix: |CI| Upgrade GitHub Actions and e2e Docker images to Node.js 24 to satisfy Wrangler 4.90.0 runtime requirements
 - fix: |Frontend| Prevent iOS Safari from auto-zooming the page when focusing mobile form controls with small font sizes
-
-### Improvements
 
 ## v1.8.0
 

@@ -1,9 +1,16 @@
 import { Context } from 'hono'
 
 import i18n from '../i18n';
-import { getBooleanValue, getJsonSetting, checkCfTurnstile, isAddressCountLimitReached } from '../utils';
+import {
+    checkCfTurnstile,
+    getBooleanValue,
+    getJsonSetting,
+    getMaxAddressCount,
+    isAddressCountLimitReached,
+} from '../utils';
 import { newAddress, getAddressPrefix, generateRandomName } from '../common'
 import { CONSTANTS } from '../constants'
+import { UserSettings } from '../models';
 
 const createNewAddress = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
@@ -18,12 +25,18 @@ const createNewAddress = async (c: Context<HonoCustomType>) => {
         return c.text(msgs.NewAddressDisabledMsg, 403)
     }
 
-    // 如果启用了禁止匿名创建，且用户已登录，检查地址数量限制
-    if (getBooleanValue(c.env.DISABLE_ANONYMOUS_USER_CREATE_EMAIL) && userPayload) {
+    let bindMaxAddressCount = 0;
+    // A logged-in create is also bound in the same D1 transaction. The old
+    // Pages two-call flow remains compatible because its follow-up bind is idempotent.
+    if (userPayload) {
         const userRole = c.get("userRolePayload");
         if (await isAddressCountLimitReached(c, userPayload.user_id, userRole)) {
             return c.text(msgs.MaxAddressCountReachedMsg, 400)
         }
+        const userSettings = new UserSettings(
+            await getJsonSetting(c, CONSTANTS.USER_SETTINGS_KEY)
+        );
+        bindMaxAddressCount = await getMaxAddressCount(c, userRole, userSettings);
     }
 
     // eslint-disable-next-line prefer-const
@@ -63,7 +76,9 @@ const createNewAddress = async (c: Context<HonoCustomType>) => {
             enableRandomSubdomain: getBooleanValue(enableRandomSubdomain),
             checkLengthByConfig: true,
             addressPrefix,
-            sourceMeta
+            sourceMeta,
+            bindUserId: userPayload?.user_id,
+            bindMaxAddressCount,
         });
         return c.json(res);
     } catch (e) {

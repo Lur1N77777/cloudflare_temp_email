@@ -2,7 +2,15 @@ import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
 import { sendMail } from "../mails_api/send_mail_api";
-import { ensureSendMailLimit, increaseSendMailLimitCount } from "../mails_api/send_mail_limit_utils";
+import { releaseSendMailLimit, reserveSendMailLimit } from "../mails_api/send_mail_limit_utils";
+import {
+    InvalidIdempotencyKeyError,
+    type OutboundSendRequest,
+    beginOutboundSendRequest,
+    completeOutboundSendRequest,
+    failOutboundSendRequest,
+    resolveOutboundIdempotencyKey,
+} from "../mails_api/outbound_idempotency";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -14,6 +22,17 @@ const getAdminSendMailErrorMessage = (
         ? message
         : msgs.OperationFailedMsg;
 }
+
+const recordAdminSendFailure = async (
+    c: Context<HonoCustomType>,
+    request: OutboundSendRequest,
+): Promise<void> => {
+    try {
+        await failOutboundSendRequest(c.env.DB, request);
+    } catch (ledgerError) {
+        console.error('Failed to record admin outbound send failure', ledgerError);
+    }
+};
 
 export const sendMailbyAdmin = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
@@ -27,8 +46,49 @@ export const sendMailbyAdmin = async (c: Context<HonoCustomType>) => {
     const {
         from_name, from_mail,
         to_mail, to_name,
-        subject, content, is_html
+        subject, content, is_html,
+        idempotency_key: bodyIdempotencyKey,
     } = reqJson;
+    if (typeof from_mail !== 'string' || !from_mail.trim()) {
+        return c.text(msgs.InvalidInputMsg, 400);
+    }
+    const outboundPayload = {
+        from_name,
+        from_mail,
+        to_mail,
+        to_name,
+        subject,
+        content,
+        is_html,
+    };
+    let outboundRequest: OutboundSendRequest;
+    try {
+        const idempotencyKey = resolveOutboundIdempotencyKey(
+            c.req.header('idempotency-key'),
+            bodyIdempotencyKey,
+        );
+        c.header('idempotency-key', idempotencyKey);
+        outboundRequest = await beginOutboundSendRequest(
+            c.env.DB,
+            from_mail,
+            idempotencyKey,
+            outboundPayload,
+        );
+    } catch (error) {
+        console.error('Admin send_mail idempotency claim failed', error);
+        return c.text(
+            error instanceof InvalidIdempotencyKeyError
+                ? msgs.InvalidInputMsg
+                : msgs.OperationFailedMsg,
+            400,
+        );
+    }
+    if (outboundRequest.state === 'completed') {
+        return c.json({ status: "ok" });
+    }
+    if (outboundRequest.state !== 'claimed') {
+        return c.text(msgs.OperationFailedMsg, 409);
+    }
     try {
         await sendMail(c, from_mail, {
             from_name: from_name,
@@ -40,9 +100,18 @@ export const sendMailbyAdmin = async (c: Context<HonoCustomType>) => {
         }, {
             isAdmin: true
         })
-    } catch (e) {
-        console.error("Admin send_mail failed", e);
-        return c.text(getAdminSendMailErrorMessage(msgs, e), 400)
+    } catch (error) {
+        await recordAdminSendFailure(c, outboundRequest);
+        console.error("Admin send_mail failed", error);
+        return c.text(getAdminSendMailErrorMessage(msgs, error), 400)
+    }
+    try {
+        // A completion-write failure must stay pending because delivery has
+        // already happened and retrying could create a duplicate message.
+        await completeOutboundSendRequest(c.env.DB, outboundRequest);
+    } catch (error) {
+        console.error('Admin send_mail completion recording failed', error);
+        return c.text(msgs.OperationFailedMsg, 400);
     }
     return c.json({ status: "ok" });
 }
@@ -64,6 +133,7 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
         html, text,
         cc, bcc, replyTo,
         attachments, headers,
+        idempotency_key: bodyIdempotencyKey,
     } = reqJson;
     if (!from || !to || !subject || (!html && !text)) {
         return c.text(msgs.InvalidInputMsg, 400)
@@ -76,8 +146,49 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
     if (!isSendMailBindingEnabled(c, mailDomain)) {
         return c.text(msgs.EnableSendMailForDomainMsg, 400)
     }
+    const outboundPayload = {
+        from,
+        to,
+        subject,
+        html,
+        text,
+        cc,
+        bcc,
+        replyTo,
+        attachments,
+        headers,
+    };
+    let outboundRequest: OutboundSendRequest;
     try {
-        await ensureSendMailLimit(c);
+        const idempotencyKey = resolveOutboundIdempotencyKey(
+            c.req.header('idempotency-key'),
+            bodyIdempotencyKey,
+        );
+        c.header('idempotency-key', idempotencyKey);
+        outboundRequest = await beginOutboundSendRequest(
+            c.env.DB,
+            fromMail,
+            idempotencyKey,
+            outboundPayload,
+        );
+    } catch (error) {
+        console.error('Admin raw send_mail idempotency claim failed', error);
+        return c.text(
+            error instanceof InvalidIdempotencyKeyError
+                ? msgs.InvalidInputMsg
+                : msgs.OperationFailedMsg,
+            400,
+        );
+    }
+    if (outboundRequest.state === 'completed') {
+        return c.json({ status: "ok" });
+    }
+    if (outboundRequest.state !== 'claimed') {
+        return c.text(msgs.OperationFailedMsg, 409);
+    }
+    let quotaReservation: Awaited<ReturnType<typeof reserveSendMailLimit>> = null;
+    try {
+        quotaReservation = await reserveSendMailLimit(c);
         await c.env.SEND_MAIL.send({
             from,
             to,
@@ -90,10 +201,23 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
             ...(attachments && attachments.length ? { attachments } : {}),
             ...(headers ? { headers } : {}),
         });
-        await increaseSendMailLimitCount(c);
     } catch (e) {
+        if (quotaReservation) {
+            try {
+                await releaseSendMailLimit(c, quotaReservation);
+            } catch (releaseError) {
+                console.error('Failed to compensate admin send quota', releaseError);
+            }
+        }
+        await recordAdminSendFailure(c, outboundRequest);
         console.error("Admin raw send_mail failed", e);
         return c.text(getAdminSendMailErrorMessage(msgs, e), 400)
+    }
+    try {
+        await completeOutboundSendRequest(c.env.DB, outboundRequest);
+    } catch (error) {
+        console.error('Admin raw send_mail completion recording failed', error);
+        return c.text(msgs.OperationFailedMsg, 400);
     }
     return c.json({ status: "ok" });
 }

@@ -6,6 +6,8 @@ import { UserSettings, GeoData, UserInfo, RoleAddressConfig } from "../models";
 import { handleListQuery } from '../common'
 import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
+import { hashUserPassword } from '../security/user_password';
+import { normalizeUserEmail } from '../user_api/registration_security';
 
 export default {
     getSetting: async (c: Context<HonoCustomType>) => {
@@ -68,25 +70,32 @@ export default {
     },
     createUser: async (c: Context<HonoCustomType>) => {
         const msgs = i18n.getMessagesbyContext(c);
-        const { email, password } = await c.req.json();
-        if (!email || !password) {
+        const { email: rawEmail, password } = await c.req.json();
+        let email: string;
+        try {
+            email = normalizeUserEmail(rawEmail);
+            checkUserPassword(password);
+        } catch {
             return c.text(msgs.InvalidEmailOrPasswordMsg, 400)
         }
+        if (typeof password !== 'string') return c.text(msgs.InvalidEmailOrPasswordMsg, 400);
         // geo data
         const reqIp = c.req.raw.headers.get("cf-connecting-ip")
         const geoData = new GeoData(reqIp, c.req.raw.cf as any);
         const userInfo = new UserInfo(geoData, email);
         try {
-            checkUserPassword(password);
-            const { success } = await c.env.DB.prepare(
+            const hashedPassword = await hashUserPassword(password);
+            const result = await c.env.DB.prepare(
                 `INSERT INTO users (user_email, password, user_info)`
-                + ` VALUES (?, ?, ?)`
+                + ` SELECT ?, ?, ? WHERE NOT EXISTS (`
+                + `SELECT 1 FROM users WHERE user_email = ? COLLATE NOCASE)`
             ).bind(
-                email, password, JSON.stringify(userInfo)
+                email, hashedPassword, JSON.stringify(userInfo), email
             ).run();
-            if (!success) {
+            if (!result.success) {
                 return c.text(msgs.FailedToRegisterMsg, 500)
             }
+            if (result.meta.changes !== 1) return c.text(msgs.UserAlreadyExistsMsg, 409);
         } catch (e) {
             const errorMsg = (e as Error).message;
             if (errorMsg && errorMsg.includes("UNIQUE")) {
@@ -118,9 +127,12 @@ export default {
         if (!user_id) return c.text(msgs.UserNotFoundMsg, 400);
         try {
             checkUserPassword(password);
+            if (typeof password !== 'string') throw new Error('Invalid password');
+            const hashedPassword = await hashUserPassword(password);
             const { success } = await c.env.DB.prepare(
-                `UPDATE users SET password = ? WHERE id = ?`
-            ).bind(password, user_id).run();
+                `UPDATE users SET password = ?, token_version = token_version + 1,`
+                + ` updated_at = datetime('now') WHERE id = ?`
+            ).bind(hashedPassword, user_id).run();
             if (!success) {
                 return c.text(msgs.FailedUpdatePasswordMsg, 500)
             }

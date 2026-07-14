@@ -5,6 +5,8 @@ import i18n from '../i18n';
 import { getJsonSetting, getMailDomain, getStringValue, getUserRoles, includesDomain } from '../utils';
 import { UserOauth2Settings } from '../models';
 import { CONSTANTS } from '../constants';
+import { normalizeUserEmail } from './registration_security';
+import { buildUserTokenPayload, loadUserAuthRecord } from '../auth_tokens';
 
 
 export default {
@@ -88,7 +90,7 @@ export default {
         }
 
         // Apply email format transformation if enabled
-        const email = (() => {
+        const formattedEmail = (() => {
             const rawEmailStr = String(rawEmail).slice(0, 256).trim();  // 限制长度防止 ReDoS
             if (!setting.enableEmailFormat || !setting.userEmailFormat) {
                 return rawEmailStr;
@@ -103,7 +105,10 @@ export default {
             }
         })();
 
-        if (!email) {
+        let email: string;
+        try {
+            email = normalizeUserEmail(formattedEmail);
+        } catch {
             return c.text(msgs.Oauth2FailedGetUserEmailMsg, 400);
         }
         // check email in mail allow list
@@ -111,48 +116,50 @@ export default {
         if (setting.enableMailAllowList && !includesDomain(setting.mailAllowList, mailDomain)) {
             return c.text(`${msgs.UserMailDomainMustInMsg} ${JSON.stringify(setting.mailAllowList, null, 2)}`, 400)
         }
-        // insert or update user
-        const { success } = await c.env.DB.prepare(
-            `INSERT INTO users (user_email, password, user_info)`
-            + ` VALUES (?, '', ?)`
-            + ` ON CONFLICT(user_email) DO UPDATE SET updated_at = datetime('now')`
-        ).bind(
-            email, JSON.stringify(userInfo)
-        ).run();
-        if (!success) {
-            return c.text(msgs.FailedToRegisterMsg, 500)
+        const defaultRole = getStringValue(c.env.USER_DEFAULT_ROLE);
+        if (defaultRole && !getUserRoles(c).some((role) => role.role === defaultRole)) {
+            return c.text(msgs.InvalidUserDefaultRoleMsg, 500);
+        }
+        const statements = [
+            c.env.DB.prepare(
+                `INSERT INTO users (user_email, password, user_info)`
+                + ` SELECT ?, '', ? WHERE NOT EXISTS (`
+                + `SELECT 1 FROM users WHERE user_email = ? COLLATE NOCASE)`
+            ).bind(email, JSON.stringify(userInfo), email),
+            c.env.DB.prepare(
+                `UPDATE users SET updated_at = datetime('now')`
+                + ` WHERE user_email = ? COLLATE NOCASE`
+            ).bind(email),
+        ];
+        if (defaultRole) {
+            statements.push(c.env.DB.prepare(
+                `INSERT INTO user_roles (user_id, role_text)`
+                + ` SELECT id, ? FROM users WHERE user_email = ? COLLATE NOCASE`
+                + ` ON CONFLICT(user_id) DO NOTHING`
+            ).bind(defaultRole, email));
+        }
+        try {
+            const results = await c.env.DB.batch(statements);
+            if (!results.every((result) => result.success)) {
+                return c.text(msgs.FailedToRegisterMsg, 500);
+            }
+        } catch (error) {
+            console.error('Atomic OAuth user registration failed', error);
+            return c.text(msgs.FailedToRegisterMsg, 500);
         }
         const { id: user_id } = await c.env.DB.prepare(
-            `SELECT id FROM users where user_email = ?`
+            `SELECT id FROM users WHERE user_email = ? COLLATE NOCASE`
         ).bind(email).first() || {};
         if (!user_id) {
             return c.text(msgs.UserNotFoundMsg, 400)
         }
-        // process user roles
-        const defaultRole = getStringValue(c.env.USER_DEFAULT_ROLE);
-        if (defaultRole) {
-            const user_roles = getUserRoles(c);
-            if (!user_roles.find((r) => r.role === defaultRole)) {
-                return c.text(msgs.InvalidUserDefaultRoleMsg, 500);
-            }
-            // update user roles
-            const { success: success2 } = await c.env.DB.prepare(
-                `INSERT INTO user_roles (user_id, role_text)`
-                + ` VALUES (?, ?)`
-                + ` ON CONFLICT(user_id) DO NOTHING`
-            ).bind(user_id, defaultRole).run();
-            if (!success2) {
-                return c.text(msgs.FailedUpdateUserDefaultRoleMsg, 500);
-            }
-        }
-        // create jwt
-        const jwt = await Jwt.sign({
-            user_email: email,
-            user_id: user_id,
-            // 90 days expire in seconds
-            exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-            iat: Math.floor(Date.now() / 1000),
-        }, c.env.JWT_SECRET, "HS256")
+        const authUser = await loadUserAuthRecord(c.env.DB, Number(user_id));
+        if (!authUser) return c.text(msgs.UserNotFoundMsg, 400);
+        const jwt = await Jwt.sign(
+            buildUserTokenPayload(authUser),
+            c.env.JWT_SECRET,
+            "HS256",
+        )
         return c.json({
             jwt: jwt
         })

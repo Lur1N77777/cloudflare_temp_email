@@ -6,28 +6,29 @@
   "scripts": {
     "dev": "wrangler dev",
     "lint": "eslint src",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "deploy": "wrangler deploy --minify",
     "start": "wrangler dev",
     "build": "wrangler deploy --dry-run --outdir dist --minify"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260624.1",
-    "@eslint/js": "9.39.1",
-    "@types/node": "^25.9.4",
-    "eslint": "9.39.1",
+    "@cloudflare/workers-types": "^5.20260713.1",
+    "@eslint/js": "10.0.1",
+    "@types/node": "^26.1.1",
+    "eslint": "10.7.0",
     "globals": "^16.5.0",
-    "typescript-eslint": "^8.62.0",
-    "wrangler": "^4.104.0"
+    "typescript-eslint": "^8.63.0",
+    "wrangler": "^4.110.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.888.0",
-    "@aws-sdk/s3-request-presigner": "3.888.0",
+    "@aws-sdk/client-s3": "3.1085.0",
+    "@aws-sdk/s3-request-presigner": "3.1085.0",
     "@simplewebauthn/server": "^13.3.2",
-    "hono": "^4.12.27",
+    "hono": "^4.12.30",
     "jsonpath-plus": "^10.4.0",
     "mimetext": "^3.0.28",
     "postal-mime": "^2.7.4",
-    "resend": "^6.14.0",
+    "resend": "^6.17.2",
     "telegraf": "4.16.3",
     "worker-mailer": "^1.2.1"
   },

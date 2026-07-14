@@ -3,6 +3,10 @@ import i18n from "../i18n";
 import { SendMailLimitConfig } from "../models";
 import { CONSTANTS } from "../constants";
 import { getJsonObjectValue, getSetting } from "../utils";
+import {
+    SEND_MAIL_QUOTA_RELEASE_SQL,
+    SEND_MAIL_QUOTA_RESERVE_SQL,
+} from './send_reservation_sql';
 
 class SendMailLimitError extends Error {
     constructor(message: string) {
@@ -91,103 +95,88 @@ const getMonthlyCountKey = (date: Date = new Date()): string => {
     return `${CONSTANTS.SEND_MAIL_LIMIT_COUNT_KEY_PREFIX}monthly:${yyyy}-${mm}`;
 }
 
-const getCount = async (
-    c: Context<HonoCustomType>,
-    key: string
-): Promise<number> => {
-    const value = await getSetting(c, key);
-    if (!value) {
-        return 0;
-    }
-    const parsed = Number.parseInt(value, 10);
-    if (!Number.isInteger(parsed) || parsed < 0) {
-        return 0;
-    }
-    return parsed;
-}
+export type SendMailLimitReservation = {
+    dailyPeriod: string;
+    monthlyPeriod: string;
+    dailyReserved: boolean;
+    monthlyReserved: boolean;
+};
 
-const cleanupSendMailLimitCount = async (
-    c: Context<HonoCustomType>,
-    currentDailyKey: string,
-    currentMonthlyKey: string
-): Promise<void> => {
-    await c.env.DB.batch([
-        c.env.DB.prepare(
-            `DELETE FROM settings
-            WHERE key LIKE ?
-            AND key < ?`
-        ).bind(`${CONSTANTS.SEND_MAIL_LIMIT_COUNT_KEY_PREFIX}daily:%`, currentDailyKey),
-        c.env.DB.prepare(
-            `DELETE FROM settings
-            WHERE key LIKE ?
-            AND key < ?`
-        ).bind(`${CONSTANTS.SEND_MAIL_LIMIT_COUNT_KEY_PREFIX}monthly:%`, currentMonthlyKey),
-    ]);
-}
+const getPeriodFromCounterKey = (key: string): string => key.slice(key.lastIndexOf(':') + 1);
 
-export const ensureSendMailLimit = async (
+export const reserveSendMailLimit = async (
     c: Context<HonoCustomType>
-): Promise<void> => {
-    try {
-        const msgs = i18n.getMessagesbyContext(c);
-        const config = await getSendMailLimitConfig(c);
-        if (!config || (!config.dailyEnabled && !config.monthlyEnabled)) {
-            return;
-        }
-        if (config.dailyEnabled && config.dailyLimit !== null && config.dailyLimit !== -1) {
-            const current = await getCount(c, getDailyCountKey());
-            if (current >= config.dailyLimit) {
-                throw new SendMailLimitError(msgs.ServerSendMailDailyLimitMsg);
-            }
-        }
-        if (config.monthlyEnabled && config.monthlyLimit !== null && config.monthlyLimit !== -1) {
-            const current = await getCount(c, getMonthlyCountKey());
-            if (current >= config.monthlyLimit) {
-                throw new SendMailLimitError(msgs.ServerSendMailMonthlyLimitMsg);
-            }
-        }
-    } catch (error) {
-        if (error instanceof SendMailLimitError) {
-            throw error;
-        }
-        console.warn("Failed to ensure send mail limit", error);
-    }
-}
+): Promise<SendMailLimitReservation | null> => {
+    const config = await getSendMailLimitConfig(c);
+    if (!config) return null;
+    const dailyReserved = config.dailyEnabled
+        && config.dailyLimit !== null
+        && config.dailyLimit !== -1;
+    const monthlyReserved = config.monthlyEnabled
+        && config.monthlyLimit !== null
+        && config.monthlyLimit !== -1;
+    if (!dailyReserved && !monthlyReserved) return null;
 
-const increaseCount = async (
+    const dailyPeriod = getPeriodFromCounterKey(getDailyCountKey());
+    const monthlyPeriod = getPeriodFromCounterKey(getMonthlyCountKey());
+    const dailyLimit = dailyReserved ? config.dailyLimit as number : -1;
+    const monthlyLimit = monthlyReserved ? config.monthlyLimit as number : -1;
+    const dailyFlag = dailyReserved ? 1 : 0;
+    const monthlyFlag = monthlyReserved ? 1 : 0;
+    const result = await c.env.DB.prepare(SEND_MAIL_QUOTA_RESERVE_SQL).bind(
+        dailyPeriod,
+        dailyFlag,
+        monthlyPeriod,
+        monthlyFlag,
+        dailyFlag,
+        dailyLimit,
+        monthlyFlag,
+        monthlyLimit,
+        dailyFlag,
+        monthlyFlag,
+        dailyFlag,
+        dailyLimit,
+        monthlyFlag,
+        monthlyLimit,
+    ).run();
+    if (result.success && result.meta.changes === 1) {
+        return { dailyPeriod, monthlyPeriod, dailyReserved, monthlyReserved };
+    }
+
+    const state = await c.env.DB.prepare(
+        `SELECT daily_period, daily_count, monthly_period, monthly_count`
+        + ` FROM send_mail_quota_state WHERE singleton = 1`
+    ).first<{
+        daily_period: string;
+        daily_count: number;
+        monthly_period: string;
+        monthly_count: number;
+    }>();
+    const msgs = i18n.getMessagesbyContext(c);
+    const currentDailyCount = state?.daily_period === dailyPeriod ? state.daily_count : 0;
+    if (dailyReserved && currentDailyCount >= dailyLimit) {
+        throw new SendMailLimitError(msgs.ServerSendMailDailyLimitMsg);
+    }
+    throw new SendMailLimitError(msgs.ServerSendMailMonthlyLimitMsg);
+};
+
+export const releaseSendMailLimit = async (
     c: Context<HonoCustomType>,
-    key: string,
+    reservation: SendMailLimitReservation,
 ): Promise<void> => {
-    await c.env.DB.prepare(
-        `INSERT INTO settings (key, value)
-        VALUES (?, '1')
-        ON CONFLICT(key) DO UPDATE SET
-            value = CAST(COALESCE(value, '0') AS INTEGER) + 1,
-            updated_at = datetime('now')`
-    ).bind(key).run();
-}
-
-export const increaseSendMailLimitCount = async (
-    c: Context<HonoCustomType>
-): Promise<void> => {
-    try {
-        const config = await getSendMailLimitConfig(c);
-        if (!config || (!config.dailyEnabled && !config.monthlyEnabled)) {
-            return;
-        }
-        const dailyKey = getDailyCountKey();
-        const monthlyKey = getMonthlyCountKey();
-        if (config.dailyEnabled) {
-            await increaseCount(c, dailyKey);
-        }
-        if (config.monthlyEnabled) {
-            await increaseCount(c, monthlyKey);
-        }
-        await cleanupSendMailLimitCount(c, dailyKey, monthlyKey);
-    } catch (error) {
-        if (error instanceof SendMailLimitError) {
-            throw error;
-        }
-        console.warn(`Failed to increment send_mail_limit_count`, error);
+    const dailyFlag = reservation.dailyReserved ? 1 : 0;
+    const monthlyFlag = reservation.monthlyReserved ? 1 : 0;
+    const result = await c.env.DB.prepare(SEND_MAIL_QUOTA_RELEASE_SQL).bind(
+        reservation.dailyPeriod,
+        dailyFlag,
+        reservation.monthlyPeriod,
+        monthlyFlag,
+        reservation.dailyPeriod,
+        dailyFlag,
+        reservation.monthlyPeriod,
+        monthlyFlag,
+    ).run();
+    if (!result.success || result.meta.changes !== 1) {
+        console.error('Failed to release reserved send-mail quota');
     }
-}
+};

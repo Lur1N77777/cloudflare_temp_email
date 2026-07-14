@@ -20,10 +20,16 @@ const list = async (c: Context<HonoCustomType>) => {
 
 const remove = async (c: Context<HonoCustomType>) => {
     const { id } = c.req.param();
-    const { success } = await c.env.DB.prepare(
-        `DELETE FROM sendbox WHERE id = ? `
-    ).bind(id).run();
-    return c.json({ success });
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM mail_flags WHERE mailbox = 'SENT' AND mail_id = ?`
+            + ` AND address_id IN (`
+            + `SELECT a.id FROM address a JOIN sendbox sb ON sb.address = a.name`
+            + ` WHERE sb.id = ?)`
+        ).bind(id, id),
+        c.env.DB.prepare(`DELETE FROM sendbox WHERE id = ?`).bind(id),
+    ]);
+    return c.json({ success: results.every((result) => result.success) });
 };
 
 export default { list, remove };

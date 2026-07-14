@@ -3,6 +3,7 @@ import { Jwt } from 'hono/utils/jwt'
 
 import utils, { checkCfTurnstile, getPasswords, getAdminPasswords, hashPassword } from '../utils';
 import i18n from '../i18n';
+import { validateAddressTokenAgainstDb } from '../auth_tokens';
 
 const api = new Hono<HonoCustomType>()
 
@@ -57,7 +58,10 @@ api.post('/open_api/credential_login', async (c) => {
     }
     try {
         const payload = await Jwt.verify(credential, c.env.JWT_SECRET, "HS256");
-        if (!payload.address) {
+        if (!await validateAddressTokenAgainstDb(
+            c.env.DB,
+            payload as Record<string, unknown>,
+        )) {
             return c.text(msgs.InvalidAddressCredentialMsg, 401)
         }
     } catch (error) {

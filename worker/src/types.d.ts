@@ -125,11 +125,19 @@ type Bindings = {
 type JwtPayload = {
     address: string
     address_id: number
+    token_version: number
+    typ?: "address"
+    sub?: string
+    exp?: number
+    iat?: number
 }
 
 type UserPayload = {
     user_email: string
     user_id: number
+    token_version: number
+    typ: "user"
+    sub: string
     exp: number
     iat: number
 }

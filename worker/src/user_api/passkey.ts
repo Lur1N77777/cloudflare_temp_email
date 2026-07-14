@@ -11,6 +11,7 @@ import { Passkey } from '../models';
 import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import i18n from '../i18n';
+import { buildUserTokenPayload, loadUserAuthRecord } from '../auth_tokens';
 
 export default {
     getPassKeys: async (c: Context<HonoCustomType>) => {
@@ -194,14 +195,13 @@ export default {
         if (!user_email) {
             return c.text(msgs.UserNotFoundMsg, 404);
         }
-        // create jwt
-        const jwt = await Jwt.sign({
-            user_email: user_email,
-            user_id: user_id,
-            // 90 days expire in seconds
-            exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-            iat: Math.floor(Date.now() / 1000),
-        }, c.env.JWT_SECRET, "HS256")
+        const authUser = await loadUserAuthRecord(c.env.DB, user_id);
+        if (!authUser) return c.text(msgs.UserNotFoundMsg, 404);
+        const jwt = await Jwt.sign(
+            buildUserTokenPayload(authUser),
+            c.env.JWT_SECRET,
+            "HS256",
+        )
         return c.json({
             jwt: jwt
         })

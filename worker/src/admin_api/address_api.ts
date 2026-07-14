@@ -2,8 +2,14 @@ import { Context } from 'hono'
 import { Jwt } from 'hono/utils/jwt'
 
 import i18n from '../i18n'
-import { getBooleanValue } from '../utils'
-import { newAddress, handleListQuery } from '../common'
+import { checkUserPassword, getBooleanValue } from '../utils'
+import { deleteAddressWithData, newAddress, handleListQuery } from '../common'
+import {
+    buildAddressTokenPayload,
+    loadAddressAuthRecord,
+    resetAddressPassword,
+} from '../auth_tokens'
+import { hashUserPassword } from '../security/user_password';
 
 const listAddresses = async (c: Context<HonoCustomType>) => {
     const { limit, offset, query, sort_by, sort_order } = c.req.query();
@@ -70,75 +76,66 @@ const createNewAddress = async (c: Context<HonoCustomType>) => {
 const deleteAddress = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
     const { id } = c.req.param();
-    // single batch runs as one transaction: rows keyed by address name are
-    // deleted first and the address row last, so the name subqueries still
-    // resolve and a failed statement rolls back the whole deletion
-    const results = await c.env.DB.batch([
-        c.env.DB.prepare(
-            `DELETE FROM raw_mails WHERE address IN`
-            + ` (select name from address where id = ?) `
-        ).bind(id),
-        c.env.DB.prepare(
-            `DELETE FROM address_sender WHERE address IN`
-            + ` (select name from address where id = ?) `
-        ).bind(id),
-        c.env.DB.prepare(
-            `DELETE FROM sendbox WHERE address IN`
-            + ` (select name from address where id = ?) `
-        ).bind(id),
-        c.env.DB.prepare(
-            `DELETE FROM auto_reply_mails WHERE address IN`
-            + ` (select name from address where id = ?) `
-        ).bind(id),
-        c.env.DB.prepare(
-            `DELETE FROM users_address WHERE address_id = ?`
-        ).bind(id),
-        c.env.DB.prepare(
-            `DELETE FROM address WHERE id = ? `
-        ).bind(id),
-    ]);
-    const success = results.every((result) => result.success);
-    if (!success) {
+    if (!/^\d+$/.test(id) || Number(id) <= 0) {
+        return c.text(msgs.AddressNotFoundMsg, 404);
+    }
+    try {
+        await deleteAddressWithData(c, null, Number(id), { skipPermissionCheck: true });
+    } catch (error) {
+        console.error('Admin address deletion failed', error);
         return c.text(msgs.OperationFailedMsg, 500)
     }
-    return c.json({ success })
+    return c.json({ success: true })
 };
 
 const clearInbox = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
     const { id } = c.req.param();
-    const { success: mailSuccess } = await c.env.DB.prepare(
-        `DELETE FROM raw_mails WHERE address IN`
-        + ` (select name from address where id = ?) `
-    ).bind(id).run();
-    if (!mailSuccess) {
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM mail_flags WHERE address_id = ? AND mailbox = 'INBOX'`
+        ).bind(id),
+        c.env.DB.prepare(
+            `DELETE FROM raw_mails WHERE address IN`
+            + ` (select name from address where id = ?)`
+        ).bind(id),
+    ]);
+    if (!results.every((result) => result.success)) {
         return c.text(msgs.OperationFailedMsg, 500)
     }
-    return c.json({ success: mailSuccess });
+    return c.json({ success: true });
 };
 
 const clearSentItems = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
     const { id } = c.req.param();
-    const { success: sendboxSuccess } = await c.env.DB.prepare(
-        `DELETE FROM sendbox WHERE address IN`
-        + ` (select name from address where id = ?) `
-    ).bind(id).run();
-    if (!sendboxSuccess) {
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM mail_flags WHERE address_id = ? AND mailbox = 'SENT'`
+        ).bind(id),
+        c.env.DB.prepare(
+            `DELETE FROM sendbox WHERE address IN`
+            + ` (SELECT name FROM address WHERE id = ?)`
+        ).bind(id),
+    ]);
+    if (!results.every((result) => result.success)) {
         return c.text(msgs.OperationFailedMsg, 500)
     }
-    return c.json({ success: sendboxSuccess });
+    return c.json({ success: true });
 };
 
 const showPassword = async (c: Context<HonoCustomType>) => {
     const { id } = c.req.param();
-    const name = await c.env.DB.prepare(
-        `SELECT name FROM address WHERE id = ? `
-    ).bind(id).first("name");
-    const jwt = await Jwt.sign({
-        address: name,
-        address_id: id
-    }, c.env.JWT_SECRET, "HS256")
+    const address = await loadAddressAuthRecord(c.env.DB, Number(id));
+    if (!address) {
+        const msgs = i18n.getMessagesbyContext(c);
+        return c.text(msgs.AddressNotFoundMsg, 404);
+    }
+    const jwt = await Jwt.sign(
+        buildAddressTokenPayload(address),
+        c.env.JWT_SECRET,
+        "HS256",
+    )
     return c.json({ jwt });
 };
 
@@ -150,13 +147,17 @@ const resetPassword = async (c: Context<HonoCustomType>) => {
     if (!getBooleanValue(c.env.ENABLE_ADDRESS_PASSWORD)) {
         return c.text(msgs.PasswordChangeDisabledMsg, 403);
     }
-    if (!password) {
+    if (typeof password !== 'string') {
         return c.text(msgs.NewPasswordRequiredMsg, 400);
     }
-    const { success } = await c.env.DB.prepare(
-        `UPDATE address SET password = ?, updated_at = datetime('now') WHERE id = ?`
-    ).bind(password, id).run();
-    if (!success) {
+    try {
+        checkUserPassword(password);
+    } catch {
+        return c.text(msgs.NewPasswordRequiredMsg, 400);
+    }
+    const storedPassword = await hashUserPassword(password);
+    const address = await resetAddressPassword(c.env.DB, Number(id), storedPassword);
+    if (!address) {
         return c.text(msgs.FailedUpdatePasswordMsg, 500);
     }
     return c.json({ success: true });

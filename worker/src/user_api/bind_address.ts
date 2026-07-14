@@ -1,10 +1,13 @@
 import { Context } from 'hono';
 import { Jwt } from 'hono/utils/jwt'
 
-import { isAddressCountLimitReached } from "../utils"
+import { getJsonSetting, getMaxAddressCount, isAddressCountLimitReached } from "../utils"
 import { unbindTelegramByAddress } from '../telegram_api/common';
 import i18n from '../i18n';
-import { updateAddressUpdatedAt, commonGetUserRole, hideObjectFields } from '../common';
+import { commonGetUserRole, hideObjectFields } from '../common';
+import { buildAddressTokenPayload, loadAddressAuthRecord } from '../auth_tokens';
+import { CONSTANTS } from '../constants';
+import { UserSettings } from '../models';
 
 const UserBindAddressModule = {
     bind: async (c: Context<HonoCustomType>) => {
@@ -158,13 +161,15 @@ const UserBindAddressModule = {
             return c.text(msgs.AddressNotBindedMsg, 400)
         }
         // generate jwt
-        const name = await c.env.DB.prepare(
-            `SELECT name FROM address WHERE id = ? `
-        ).bind(address_id).first("name");
-        const jwt = await Jwt.sign({
-            address: name,
-            address_id: address_id
-        }, c.env.JWT_SECRET, "HS256")
+        const address = await loadAddressAuthRecord(c.env.DB, Number(address_id));
+        if (!address) {
+            return c.text(msgs.AddressNotFoundMsg, 400)
+        }
+        const jwt = await Jwt.sign(
+            buildAddressTokenPayload(address),
+            c.env.JWT_SECRET,
+            "HS256",
+        )
         return c.json({
             jwt: jwt
         })
@@ -173,6 +178,9 @@ const UserBindAddressModule = {
         const msgs = i18n.getMessagesbyContext(c);
         const { user_id } = c.get("userPayload");
         const { address_id, target_user_email } = await c.req.json();
+        if (!Number.isSafeInteger(Number(address_id)) || Number(address_id) <= 0
+            || typeof target_user_email !== 'string'
+        ) return c.text(msgs.InvalidAddressOrUserTokenMsg, 400);
         // check if address exists
         const address = await c.env.DB.prepare(
             `SELECT name FROM address where id = ?`
@@ -189,14 +197,20 @@ const UserBindAddressModule = {
         }
         // check if target user exists
         const target_user_id = await c.env.DB.prepare(
-            `SELECT id FROM users where user_email = ?`
-        ).bind(target_user_email).first<number>("id");
+            `SELECT id FROM users WHERE user_email = ? COLLATE NOCASE`
+        ).bind(target_user_email.trim()).first<number>("id");
         if (!target_user_id) {
             return c.text(msgs.TargetUserNotFoundMsg, 400)
         }
-        // check target user binded address count
+        // Resolve the target limit once, then enforce it again inside the ownership UPDATE.
         const userRoleObj = await commonGetUserRole(c, target_user_id);
-        if (await isAddressCountLimitReached(c, target_user_id, userRoleObj?.role)) {
+        const settings = new UserSettings(await getJsonSetting(c, CONSTANTS.USER_SETTINGS_KEY));
+        const maxAddressCount = await getMaxAddressCount(c, userRoleObj?.role, settings);
+        const targetAddressCount = await c.env.DB.prepare(
+            `SELECT COUNT(*) AS count FROM users_address`
+            + ` WHERE user_id = ? AND address_id != ?`
+        ).bind(target_user_id, address_id).first<number>('count') || 0;
+        if (maxAddressCount > 0 && targetAddressCount >= maxAddressCount) {
             return c.text(msgs.MaxAddressCountReachedMsg, 400)
         }
         // check if binded
@@ -204,52 +218,54 @@ const UserBindAddressModule = {
             `SELECT user_id FROM users_address where user_id = ? and address_id = ?`
         ).bind(user_id, address_id).first("user_id");
         if (!db_user_address_id) return c.text(msgs.AddressNotBindedMsg, 400)
-        // unbind telegram address
-        await unbindTelegramByAddress(c, address);
-        // unbind user address
         try {
-            const { success } = await c.env.DB.prepare(
-                `DELETE FROM users_address where user_id = ? and address_id = ?`
-            ).bind(user_id, address_id).run();
-            if (!success) {
-                return c.text(msgs.OperationFailedMsg, 500)
+            const results = await c.env.DB.batch([
+                c.env.DB.prepare(
+                    `UPDATE users_address SET user_id = ?`
+                    + ` WHERE user_id = ? AND address_id = ?`
+                    + ` AND (? <= 0 OR (`
+                    + `SELECT COUNT(*) FROM users_address`
+                    + ` WHERE user_id = ? AND address_id != ?`
+                    + `) < ?)`
+                ).bind(
+                    target_user_id,
+                    user_id,
+                    address_id,
+                    maxAddressCount,
+                    target_user_id,
+                    address_id,
+                    maxAddressCount,
+                ),
+                c.env.DB.prepare(
+                    `UPDATE address SET password = NULL,`
+                    + ` token_version = token_version + 1,`
+                    + ` updated_at = datetime('now')`
+                    + ` WHERE id = ? AND changes() = 1`
+                ).bind(address_id),
+            ]);
+            if (!results.every((result) => result.success)
+                || results[0].meta.changes !== 1
+                || results[1].meta.changes !== 1
+            ) {
+                const currentOwner = await c.env.DB.prepare(
+                    `SELECT user_id FROM users_address WHERE address_id = ?`
+                ).bind(address_id).first<number>('user_id');
+                if (String(currentOwner) !== String(user_id)) {
+                    return c.text(msgs.AddressNotBindedMsg, 400);
+                }
+                return c.text(msgs.MaxAddressCountReachedMsg, 400);
             }
-        } catch (e) {
+        } catch (error) {
+            console.error('Atomic address transfer failed', error);
             return c.text(msgs.OperationFailedMsg, 500)
         }
-        // delete address
-        await c.env.DB.prepare(
-            `DELETE FROM address WHERE id = ? `
-        ).bind(address_id).run();
-        // new address
-        const { success: newAddressSuccess } = await c.env.DB.prepare(
-            `INSERT INTO address(name) VALUES(?)`
-        ).bind(address).run();
-        if (!newAddressSuccess) {
-            throw new Error(msgs.FailedCreateAddressMsg)
-        }
-        await updateAddressUpdatedAt(c, address);
-        // find new address id
-        const new_address_id = await c.env.DB.prepare(
-            `SELECT id FROM address WHERE name = ?`
-        ).bind(address).first<number | null | undefined>("id");
-        if (!new_address_id) {
-            throw new Error(msgs.OperationFailedMsg)
-        }
-        // bind
+
+        // Telegram KV cannot join the D1 transaction. The old token is already
+        // invalid because token_version was rotated, so cleanup is best effort.
         try {
-            const { success } = await c.env.DB.prepare(
-                `INSERT INTO users_address (user_id, address_id) VALUES (?, ?)`
-            ).bind(target_user_id, new_address_id).run();
-            if (!success) {
-                return c.text(msgs.OperationFailedMsg, 500)
-            }
-        } catch (e) {
-            const error = e as Error;
-            if (error.message && error.message.includes("UNIQUE")) {
-                return c.text(msgs.AddressAlreadyBindedMsg, 400)
-            }
-            return c.text(msgs.OperationFailedMsg, 500)
+            await unbindTelegramByAddress(c, address);
+        } catch (error) {
+            console.error(`Failed to remove Telegram binding for transferred address ${address}`, error);
         }
         return c.json({ success: true })
     }

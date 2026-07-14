@@ -5,11 +5,13 @@ import { useScopedI18n } from '@/i18n/app'
 import { onBeforeUnmount, ref, shallowRef } from 'vue'
 import { useSessionStorage } from '@vueuse/core'
 import { api } from '../../api'
+import { createOutboundIdempotencyTracker } from '../../utils/outboundIdempotency'
 
 const message = useMessage()
 const isPreview = ref(false)
 const editorRef = shallowRef()
 const sending = ref(false)
+const outboundRequests = createOutboundIdempotencyTracker()
 
 const sendMailModel = useSessionStorage('sendMailByAdminModel', {
     fromName: "",
@@ -93,14 +95,19 @@ const send = async () => {
         is_html: sendMailModel.value.contentType != 'text',
         content,
     }
+    const attempt = outboundRequests.begin('/admin/send_mail', payload)
 
     sending.value = true
     try {
         await api.fetch(`/admin/send_mail`,
             {
                 method: 'POST',
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    ...payload,
+                    idempotency_key: attempt.key,
+                })
             })
+        outboundRequests.succeeded(attempt)
         sendMailModel.value = {
             fromName: "",
             fromMail: "",
@@ -112,6 +119,7 @@ const send = async () => {
         }
         message.success(t("successSend"));
     } catch (error) {
+        outboundRequests.failed(attempt, error)
         message.error(error.message || "error");
     } finally {
         sending.value = false

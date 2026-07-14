@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import binascii
+import hashlib
 import logging
 import email
 import ssl
@@ -6,7 +9,14 @@ import ssl
 import httpx
 
 from aiosmtpd.controller import Controller
-from aiosmtpd.smtp import SMTP, Session, Envelope, AuthResult, LoginPassword
+from aiosmtpd.smtp import (
+    MISSING,
+    SMTP,
+    Session,
+    Envelope,
+    AuthResult,
+    LoginPassword,
+)
 
 from config import settings
 
@@ -23,17 +33,132 @@ def _safe_decode_payload(payload, charset):
         return payload.decode("utf-8", errors="replace")
 
 
+def _safe_header(value) -> str:
+    if value is None:
+        return ""
+    try:
+        return str(email.header.make_header(email.header.decode_header(value)))
+    except (TypeError, ValueError, UnicodeError):
+        return str(value)
+
+
+def _looks_like_jwt(value: str) -> bool:
+    parts = value.split(".")
+    return len(parts) == 3 and parts[0].startswith("eyJ")
+
+
+def build_smtp_idempotency_key(authenticated_address: str, envelope: Envelope) -> str:
+    """Return the same bounded key when an SMTP client retries the same DATA."""
+    digest = hashlib.sha256()
+    parts = [
+        authenticated_address.strip().lower().encode("utf-8"),
+        str(envelope.mail_from or "").strip().lower().encode("utf-8"),
+        "\n".join(sorted(str(item).strip().lower() for item in envelope.rcpt_tos)).encode("utf-8"),
+    ]
+    content = envelope.content
+    parts.append(content if isinstance(content, bytes) else str(content or "").encode("utf-8"))
+    for part in parts:
+        digest.update(len(part).to_bytes(8, "big"))
+        digest.update(part)
+    return f"smtp-sha256-{digest.hexdigest()}"
+
+
 class CustomSMTPHandler:
 
+    def __init__(self, client=None):
+        self._client = client or httpx.AsyncClient(
+            timeout=settings.imap_http_timeout,
+            headers={
+                "x-custom-auth": settings.basic_password,
+                "Content-Type": "application/json",
+            },
+        )
+
     def authenticator(self, server, session, envelope, mechanism, auth_data):
-        fail_nothandled = AuthResult(success=False, handled=False)
-        if mechanism not in ("LOGIN", "PLAIN"):
-            _logger.warning(f"Unsupported mechanism {mechanism}")
-            return fail_nothandled
-        if not isinstance(auth_data, LoginPassword):
-            _logger.warning(f"Invalid auth data {auth_data}")
-            return fail_nothandled
-        return AuthResult(success=True, auth_data=auth_data)
+        # LOGIN and PLAIN are implemented as async handler hooks below. Keep
+        # the fallback closed so a future mechanism cannot bypass verification.
+        return AuthResult(success=False, handled=False)
+
+    async def _verify_credentials(self, login: bytes, password: bytes) -> AuthResult:
+        try:
+            username = login.decode("utf-8").strip().lower()
+            credential = password.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            return AuthResult(success=False)
+        if not username or not credential:
+            return AuthResult(success=False)
+
+        try:
+            if _looks_like_jwt(credential):
+                response = await self._client.get(
+                    f"{settings.proxy_url.rstrip('/')}/api/settings",
+                    headers={
+                        "Authorization": f"Bearer {credential}",
+                        "x-custom-auth": settings.basic_password,
+                    },
+                )
+                if response.status_code != 200:
+                    return AuthResult(success=False)
+                address = str(response.json().get("address") or "").strip().lower()
+                if not address or address != username:
+                    return AuthResult(success=False)
+                resolved = credential
+            else:
+                response = await self._client.post(
+                    f"{settings.proxy_url.rstrip('/')}/api/address_login",
+                    json={"email": username, "password": credential},
+                    headers={
+                        "x-custom-auth": settings.basic_password,
+                        "Content-Type": "application/json",
+                    },
+                )
+                if response.status_code != 200:
+                    return AuthResult(success=False)
+                resolved = str(response.json().get("jwt") or "").strip()
+                if not resolved:
+                    return AuthResult(success=False)
+        except (httpx.HTTPError, ValueError, TypeError):
+            _logger.warning("SMTP credential verification failed")
+            return AuthResult(success=False)
+
+        return AuthResult(
+            success=True,
+            auth_data=LoginPassword(username.encode("utf-8"), resolved.encode("utf-8")),
+        )
+
+    async def auth_PLAIN(self, server: SMTP, args) -> AuthResult:
+        if len(args) == 1:
+            auth_value = await server.challenge_auth("")
+            if auth_value is MISSING:
+                return AuthResult(success=False)
+        else:
+            try:
+                auth_value = base64.b64decode(args[1].encode("ascii"), validate=True)
+            except (ValueError, UnicodeError, binascii.Error):
+                await server.push("501 5.5.2 Invalid authentication payload")
+                return AuthResult(success=False, handled=True)
+        try:
+            _, login, password = auth_value.split(b"\x00")
+        except ValueError:
+            await server.push("501 5.5.2 Invalid authentication payload")
+            return AuthResult(success=False, handled=True)
+        return await self._verify_credentials(login, password)
+
+    async def auth_LOGIN(self, server: SMTP, args) -> AuthResult:
+        if len(args) == 1:
+            login = await server.challenge_auth(server.AuthLoginUsernameChallenge)
+            if login is MISSING:
+                return AuthResult(success=False)
+        else:
+            try:
+                login = base64.b64decode(args[1].encode("ascii"), validate=True)
+            except (ValueError, UnicodeError, binascii.Error):
+                await server.push("501 5.5.2 Invalid username encoding")
+                return AuthResult(success=False, handled=True)
+        password = await server.challenge_auth(server.AuthLoginPasswordChallenge)
+        if password is MISSING:
+            return AuthResult(success=False)
+        return await self._verify_credentials(login, password)
 
     async def handle_DATA(self, server: SMTP, session: Session, envelope: Envelope) -> str:
         _logger.info(
@@ -87,33 +212,30 @@ class CustomSMTPHandler:
             content_list,
             key=lambda x: (x["type"] == "text/html", len(x["value"]))
         )
-        from_name, _ = email.utils.parseaddr(
-            str(email.header.make_header(
-                email.header.decode_header(msg['From'])
-            ))
-        )
+        from_name, _ = email.utils.parseaddr(_safe_header(msg.get('From')))
         to_mail_map = {}
-        for to in str(email.header.make_header(
-            email.header.decode_header(msg['To'])
-        )).split(","):
+        to_header = _safe_header(msg.get('To'))
+        for to in to_header.split(",") if to_header else []:
             tmp_to_name, tmp_to_mail = email.utils.parseaddr(to)
-            to_mail_map[tmp_to_mail] = tmp_to_name
+            if tmp_to_mail:
+                to_mail_map[tmp_to_mail.lower()] = tmp_to_name
         _logger.info(f"Parsed mail from {from_name} to {to_mail_map}")
         # Send mail
         send_body = {
             "token": session.auth_data.password.decode(),
+            "idempotency_key": build_smtp_idempotency_key(
+                session.auth_data.login.decode(), envelope
+            ),
             "from_name": from_name,
-            "to_name": to_mail_map.get(to_mail),
+            "to_name": to_mail_map.get(to_mail.lower()),
             "to_mail": to_mail,
-            "subject": str(email.header.make_header(
-                email.header.decode_header(msg['Subject'])
-            )),
+            "subject": _safe_header(msg.get('Subject')),
             "is_html": body["type"] == "text/html",
             "content": body["value"],
         }
         _logger.info(f"Send mail {dict(send_body, token='***')}")
         try:
-            res = httpx.post(
+            res = await self._client.post(
                 f"{settings.proxy_url}/external/api/send_mail",
                 json=send_body, headers={
                     "Content-Type": "application/json"
@@ -124,10 +246,12 @@ class CustomSMTPHandler:
                     "Failed to send mail "
                     f"code=[{res.status_code}] text=[{res.text}]"
                 )
-                return f'500 Internal server error code=[{res.status_code}] text=[{res.text}]'
-        except Exception as e:
-            _logger.error(e)
-            return '500 Internal server error'
+                if 400 <= res.status_code < 500:
+                    return '550 5.7.1 Message rejected by backend'
+                return '451 4.3.0 Temporary backend failure'
+        except httpx.HTTPError:
+            _logger.exception("SMTP backend request failed")
+            return '451 4.3.0 Temporary backend failure'
 
         return '250 OK'
 
@@ -154,7 +278,6 @@ def start_smtp_server():
         port=settings.port,
         auth_require_tls=bool(tls_context),
         decode_data=True,
-        authenticator=handler.authenticator,
         auth_exclude_mechanism=["DONT"],
         tls_context=tls_context,
     )

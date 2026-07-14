@@ -76,7 +76,10 @@ class SimpleMailbox:
         return 0
 
     def getUnseenCount(self):
-        return 0
+        return sum(
+            1 for uid in self._uid_index
+            if r"\Seen" not in self._flags.get(uid, set())
+        )
 
     def isWriteable(self):
         return 1
@@ -92,10 +95,11 @@ class SimpleMailbox:
         if not self._uid_index_built:
             yield self._build_uid_index()
         else:
-            count = yield self._refresh_count()
-            if count != self._message_count:
-                self._message_count = count
+            count, newest_id = yield self._refresh_state()
+            if self._mailbox_changed(count, newest_id):
                 yield self._build_uid_index()
+        if "UNSEEN" in names:
+            yield self._refresh_flags(self._uid_index)
 
         r = {}
         if "MESSAGES" in names:
@@ -110,41 +114,57 @@ class SimpleMailbox:
             r["UNSEEN"] = self.getUnseenCount()
         return r
 
-    def _refresh_count(self) -> defer.Deferred:
-        return self._client.get_message_count(self.name)
+    def _refresh_state(self) -> defer.Deferred:
+        return self._client.get_mailbox_state(self.name)
+
+    def _mailbox_changed(self, count: int, newest_id: int | None) -> bool:
+        indexed_newest = self._uid_index[-1] if self._uid_index else None
+        return count != self._message_count or newest_id != indexed_newest
 
     @defer.inlineCallbacks
     def _build_uid_index(self):
-        """Build UID index by fetching all message IDs from backend."""
-        count = yield self._client.get_message_count(self.name)
-        self._message_count = count
-        _logger.info("Building UID index for %s: count=%d", self.name, count)
-
-        if count == 0:
-            self._uid_index = []
-            self._uid_index_built = True
-            return
-
+        """Build the UID index from lightweight, stable cursor pages."""
         uid_set = set()
-        batch_size = 100
-        offset = 0
+        batch_size = 200
+        before_id = None
+        reported_count = 0
 
-        while offset < count:
-            limit = min(batch_size, count - offset)
-            results, _ = yield self._client.get_messages(
-                self.name, limit, offset
+        while True:
+            results, count, next_cursor = yield self._client.get_mail_ids(
+                self.name, batch_size, before_id
             )
+            if before_id is None:
+                reported_count = count
+                _logger.info(
+                    "Building UID index for %s: count=%d",
+                    self.name, reported_count,
+                )
             for item in results:
                 item_id = item.get("id")
-                if item_id is not None and item_id not in uid_set:
+                if isinstance(item_id, int) and item_id > 0:
                     uid_set.add(item_id)
             _logger.info(
-                "UID index batch: offset=%d limit=%d got=%d total_uids=%d",
-                offset, limit, len(results), len(uid_set),
+                "UID index page: before_id=%s got=%d total_uids=%d",
+                before_id, len(results), len(uid_set),
             )
-            offset += limit
+            if next_cursor is None:
+                break
+            if (
+                not isinstance(next_cursor, int)
+                or next_cursor <= 0
+                or (before_id is not None and next_cursor >= before_id)
+            ):
+                raise ValueError("Backend returned an invalid mail cursor")
+            before_id = next_cursor
 
         self._uid_index = sorted(uid_set)
+        self._message_count = len(self._uid_index)
+        if reported_count != self._message_count:
+            _logger.info(
+                "Mailbox %s changed during UID sync: reported=%d indexed=%d",
+                self.name, reported_count, self._message_count,
+            )
+        yield self._load_flags()
         self._uid_index_built = True
         _logger.info(
             "UID index built for %s: %d UIDs, range=%s..%s",
@@ -152,6 +172,40 @@ class SimpleMailbox:
             self._uid_index[0] if self._uid_index else "N/A",
             self._uid_index[-1] if self._uid_index else "N/A",
         )
+
+    @defer.inlineCallbacks
+    def _load_flags(self):
+        """Load persisted flags for the current UID index."""
+        self._flags = {}
+        yield self._refresh_flags(self._uid_index)
+
+    @defer.inlineCallbacks
+    def _refresh_flags(self, uids: list[int]):
+        """Refresh persisted flags for a bounded set of UIDs."""
+        unique_uids = list(dict.fromkeys(uids))
+        refreshed = {mail_id: set() for mail_id in unique_uids}
+        allowed = set(self.getFlags())
+        batch_size = 90
+        for start in range(0, len(unique_uids), batch_size):
+            batch = unique_uids[start:start + batch_size]
+            batch_set = set(batch)
+            rows = yield self._client.get_flags(self.name, batch)
+            for row in rows:
+                mail_id = row.get("mail_id")
+                if mail_id not in batch_set:
+                    continue
+                values = row.get("flags", [])
+                if not isinstance(values, list):
+                    continue
+                refreshed[mail_id] = {
+                    flag for flag in values
+                    if isinstance(flag, str) and flag in allowed
+                }
+        for mail_id, flags in refreshed.items():
+            self._flags[mail_id] = flags
+            cached = self._cache.get(mail_id)
+            if cached is not None:
+                cached._flags = flags
 
     def _seq_to_uid(self, seq: int) -> int | None:
         """Convert 1-based sequence number to UID."""
@@ -204,36 +258,22 @@ class SimpleMailbox:
         if not uncached:
             return
 
-        uncached_set = set(uncached)
         id_to_data = {}
-        batch_size = 50
-        total = self._message_count
+        batch_size = 10
 
         _logger.info(
-            "Fetching %d uncached messages (total=%d) for %s",
-            len(uncached), total, self.name,
+            "Fetching %d uncached messages by ID for %s",
+            len(uncached), self.name,
         )
 
-        if total == 0:
-            return
-
-        fetched_ids = set()
-        offset = 0
-
-        while offset < total and len(fetched_ids) < len(uncached):
-            limit = min(batch_size, total - offset)
-            results, _ = yield self._client.get_messages(
-                self.name, limit, offset
-            )
+        for start in range(0, len(uncached), batch_size):
+            batch = uncached[start:start + batch_size]
+            batch_ids = set(batch)
+            results = yield self._client.get_mail_details(self.name, batch)
             for item in results:
                 item_id = item.get("id")
-                if item_id in uncached_set and item_id not in fetched_ids:
+                if item_id in batch_ids:
                     id_to_data[item_id] = item
-                    fetched_ids.add(item_id)
-
-            if len(fetched_ids) >= len(uncached):
-                break
-            offset += limit
 
         _logger.info(
             "Fetched %d/%d messages for %s",
@@ -255,7 +295,7 @@ class SimpleMailbox:
                         continue
 
                     if uid_val not in self._flags:
-                        self._flags[uid_val] = {r"\Seen"}
+                        self._flags[uid_val] = set()
                     flags = self._flags[uid_val]
                     msg = SimpleMessage(
                         uid_val, email_model, flags=flags, raw=raw,
@@ -270,9 +310,8 @@ class SimpleMailbox:
         if not self._uid_index_built:
             yield self._build_uid_index()
         else:
-            count = yield self._refresh_count()
-            if count != self._message_count:
-                self._message_count = count
+            count, newest_id = yield self._refresh_state()
+            if self._mailbox_changed(count, newest_id):
                 yield self._build_uid_index()
 
         target_uids = self._resolve_message_set(messages, uid)
@@ -284,6 +323,7 @@ class SimpleMailbox:
         if not target_uids:
             return []
 
+        yield self._refresh_flags(target_uids)
         yield self._fetch_and_cache_messages(target_uids)
 
         result = []
@@ -310,18 +350,51 @@ class SimpleMailbox:
 
         target_uids = self._resolve_message_set(messages, uid)
         result = {}
+        yield self._refresh_flags(target_uids)
+        allowed = set(self.getFlags())
+        requested_flags = {
+            flag.decode("ascii") if isinstance(flag, bytes) else flag
+            for flag in flags
+        }
+        if not requested_flags.issubset(allowed):
+            raise ValueError("Unsupported IMAP flag")
+        if mode == 1:
+            operation = "add"
+        elif mode == -1:
+            operation = "remove"
+        elif mode == 0:
+            operation = "replace"
+        else:
+            raise ValueError("Unsupported IMAP flag operation")
 
+        updates = []
         for u in target_uids:
             current_flags = self._flags.get(u, set())
 
             if mode == 1:    # +FLAGS
-                current_flags = current_flags | set(flags)
+                current_flags = current_flags | requested_flags
             elif mode == -1:  # -FLAGS
-                current_flags = current_flags - set(flags)
-            elif mode == 0:   # FLAGS (replace)
-                current_flags = set(flags)
+                current_flags = current_flags - requested_flags
+            else:             # FLAGS (replace)
+                current_flags = set(requested_flags)
 
-            self._flags[u] = current_flags
+            updates.append({
+                "mail_id": u,
+                "operation": operation,
+                "flags": sorted(
+                    current_flags if operation == "replace"
+                    else requested_flags
+                ),
+            })
+
+        for start in range(0, len(updates), 40):
+            yield self._client.patch_flags(
+                self.name, updates[start:start + 40]
+            )
+
+        yield self._refresh_flags(target_uids)
+        for u in target_uids:
+            current_flags = self._flags.get(u, set())
             seq = self._uid_to_seq(u)
             if seq is not None:
                 result[seq] = current_flags

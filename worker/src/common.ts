@@ -7,6 +7,8 @@ import { unbindTelegramByAddress } from './telegram_api/common';
 import { CONSTANTS } from './constants';
 import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
 import i18n from './i18n';
+import { buildAddressTokenPayload } from './auth_tokens';
+import { hashUserPassword } from './security/user_password';
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
 const DEFAULT_RANDOM_SUBDOMAIN_LENGTH = 8;
@@ -276,7 +278,8 @@ const generatePasswordForAddress = async (
     }
 
     const plainPassword = generateRandomPassword();
-    const hashedPassword = await hashPassword(plainPassword);
+    const clientPasswordHash = await hashPassword(plainPassword);
+    const hashedPassword = await hashUserPassword(clientPasswordHash);
     const { success } = await c.env.DB.prepare(
         `UPDATE address SET password = ?, updated_at = datetime('now') WHERE name = ?`
     ).bind(hashedPassword, address).run();
@@ -293,25 +296,58 @@ const insertAddressRecord = async (
     c: Context<HonoCustomType>,
     address: string,
     sourceMeta: string | undefined | null,
-    msgs: ReturnType<typeof i18n.getMessagesbyContext>
+    msgs: ReturnType<typeof i18n.getMessagesbyContext>,
+    bindUserId?: number,
+    bindMaxAddressCount: number = 0,
 ): Promise<void> => {
-    try {
-        const result = await c.env.DB.prepare(
-            `INSERT INTO address(name, source_meta) VALUES(?, ?)`
-        ).bind(address, sourceMeta).run();
-        if (!result.success) {
-            throw new Error(msgs.FailedCreateAddressMsg)
+    const executeInsert = async (includeSourceMeta: boolean): Promise<void> => {
+        const insertAddress = includeSourceMeta
+            ? c.env.DB.prepare(
+                `INSERT INTO address(name, source_meta) VALUES(?, ?)`
+            ).bind(address, sourceMeta)
+            : c.env.DB.prepare(`INSERT INTO address(name) VALUES(?)`).bind(address);
+        if (!bindUserId) {
+            const result = await insertAddress.run();
+            if (!result.success || result.meta.changes !== 1) {
+                throw new Error(msgs.FailedCreateAddressMsg);
+            }
+            return;
         }
+
+        const results = await c.env.DB.batch([
+            insertAddress,
+            c.env.DB.prepare(
+                `INSERT INTO users_address (user_id, address_id)`
+                + ` SELECT ?, id FROM address WHERE name = ?`
+                + ` AND (? <= 0 OR (`
+                + `SELECT COUNT(*) FROM users_address WHERE user_id = ?`
+                + `) < ?)`
+            ).bind(
+                bindUserId,
+                address,
+                bindMaxAddressCount,
+                bindUserId,
+                bindMaxAddressCount,
+            ),
+            // Force a rollback if the conditional bind inserted no row. users.user_email
+            // is NOT NULL, so this guard fails the whole D1 batch only in that case.
+            c.env.DB.prepare(
+                `INSERT INTO users (user_email, password)`
+                + ` SELECT NULL, '' WHERE changes() = 0`
+            ),
+        ]);
+        if (!results.every((result) => result.success)
+            || results[0].meta.changes !== 1
+            || results[1].meta.changes !== 1
+        ) throw new Error(msgs.FailedCreateAddressMsg);
+    };
+    try {
+        await executeInsert(true);
     } catch (e) {
         const message = (e as Error).message;
         // Fallback: source_meta field may not exist, try without it
         if (message && message.includes("source_meta")) {
-            const result = await c.env.DB.prepare(
-                `INSERT INTO address(name) VALUES(?)`
-            ).bind(address).run();
-            if (!result.success) {
-                throw new Error(msgs.FailedCreateAddressMsg)
-            }
+            await executeInsert(false);
             return;
         }
         throw e;
@@ -330,6 +366,8 @@ export const newAddress = async (
         checkAllowDomains = true,
         enableCheckNameRegex = true,
         sourceMeta = null,
+        bindUserId,
+        bindMaxAddressCount = 0,
     }: {
         name: string, domain: string | undefined | null,
         enablePrefix: boolean,
@@ -339,6 +377,8 @@ export const newAddress = async (
         checkAllowDomains?: boolean,
         enableCheckNameRegex?: boolean,
         sourceMeta?: string | undefined | null,
+        bindUserId?: number,
+        bindMaxAddressCount?: number,
     }
 ): Promise<{ address: string, jwt: string, password?: string | null, address_id: number }> => {
     const msgs = i18n.getMessagesbyContext(c);
@@ -405,7 +445,14 @@ export const newAddress = async (
         const address = `${name}@${addressDomain}`;
 
         try {
-            await insertAddressRecord(c, address, sourceMeta, msgs);
+            await insertAddressRecord(
+                c,
+                address,
+                sourceMeta,
+                msgs,
+                bindUserId,
+                bindMaxAddressCount,
+            );
             await updateAddressUpdatedAt(c, address);
 
             const address_id = await c.env.DB.prepare(
@@ -420,10 +467,11 @@ export const newAddress = async (
             const generatedPassword = await generatePasswordForAddress(c, address);
 
             // create jwt
-            const jwt = await Jwt.sign({
-                address: address,
-                address_id: address_id
-            }, c.env.JWT_SECRET, "HS256")
+            const jwt = await Jwt.sign(buildAddressTokenPayload({
+                id: address_id,
+                name: address,
+                token_version: 0,
+            }), c.env.JWT_SECRET, "HS256")
             return {
                 jwt: jwt,
                 address: address,
@@ -436,9 +484,9 @@ export const newAddress = async (
                 if (enableRandomSubdomain && attempt < maxAttempts - 1) {
                     continue;
                 }
-                throw new Error(msgs.AddressAlreadyExistsMsg)
+                throw new Error(msgs.AddressAlreadyExistsMsg, { cause: e })
             }
-            throw new Error(msgs.FailedCreateAddressMsg)
+            throw new Error(msgs.FailedCreateAddressMsg, { cause: e })
         }
     }
 
@@ -491,20 +539,50 @@ export const cleanup = async (
             )
             break;
         case "mails":
-            await c.env.DB.prepare(`
-                DELETE FROM raw_mails WHERE created_at < datetime('now', '-${cleanDays} day')`
-            ).run();
+            await c.env.DB.batch([
+                c.env.DB.prepare(`
+                    DELETE FROM mail_flags WHERE mailbox = 'INBOX' AND mail_id IN (
+                        SELECT id FROM raw_mails
+                        WHERE created_at < datetime('now', '-${cleanDays} day')
+                    )`
+                ),
+                c.env.DB.prepare(`
+                    DELETE FROM raw_mails WHERE created_at < datetime('now', '-${cleanDays} day')`
+                ),
+            ]);
             break;
         case "mails_unknow":
-            await c.env.DB.prepare(`
-                DELETE FROM raw_mails WHERE address NOT IN
-                (select name from address) AND created_at < datetime('now', '-${cleanDays} day')`
-            ).run();
+            await c.env.DB.batch([
+                c.env.DB.prepare(`
+                    DELETE FROM mail_flags WHERE mailbox = 'INBOX' AND mail_id IN (
+                        SELECT id FROM raw_mails WHERE address NOT IN
+                        (select name from address)
+                        AND created_at < datetime('now', '-${cleanDays} day')
+                    )`
+                ),
+                c.env.DB.prepare(`
+                    DELETE FROM raw_mails WHERE address NOT IN
+                    (select name from address) AND created_at < datetime('now', '-${cleanDays} day')`
+                ),
+            ]);
             break;
         case "sendbox":
-            await c.env.DB.prepare(`
-                DELETE FROM sendbox WHERE created_at < datetime('now', '-${cleanDays} day')`
-            ).run();
+            await c.env.DB.batch([
+                c.env.DB.prepare(`
+                    DELETE FROM mail_flags
+                    WHERE mailbox = 'SENT' AND EXISTS (
+                        SELECT 1 FROM sendbox sb
+                        JOIN address a ON a.name = sb.address
+                        WHERE a.id = mail_flags.address_id
+                        AND sb.id = mail_flags.mail_id
+                        AND sb.created_at < datetime('now', '-${cleanDays} day')
+                    )`
+                ),
+                c.env.DB.prepare(`
+                    DELETE FROM sendbox
+                    WHERE created_at < datetime('now', '-${cleanDays} day')`
+                ),
+            ]);
             break;
         case "emptyAddress":
             // Delete addresses that have no emails and were created more than N days ago
@@ -523,30 +601,36 @@ const batchDeleteAddressWithData = async (
     c: Context<HonoCustomType>,
     addressQueryCondition: string,
 ): Promise<boolean> => {
-    await c.env.DB.prepare(
-        `DELETE FROM raw_mails WHERE address IN ( ` +
-        `SELECT name FROM address WHERE ${addressQueryCondition})`
-    ).run();
-    await c.env.DB.prepare(
-        `DELETE FROM sendbox WHERE address IN ( ` +
-        `SELECT name FROM address WHERE ${addressQueryCondition})`
-    ).run();
-    await c.env.DB.prepare(
-        `DELETE FROM auto_reply_mails WHERE address IN ( ` +
-        `SELECT name FROM address WHERE ${addressQueryCondition})`
-    ).run();
-    await c.env.DB.prepare(
-        `DELETE FROM address_sender WHERE address IN ( ` +
-        `SELECT name FROM address WHERE ${addressQueryCondition})`
-    ).run();
-    await c.env.DB.prepare(
-        `DELETE FROM users_address WHERE address_id IN ( ` +
-        `SELECT id FROM address WHERE ${addressQueryCondition})`
-    ).run();
-    // delete address
-    await c.env.DB.prepare(`
-        DELETE FROM address WHERE ${addressQueryCondition}`
-    ).run();
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM mail_flags WHERE address_id IN (`
+            + `SELECT id FROM address WHERE ${addressQueryCondition})`
+        ),
+        c.env.DB.prepare(
+            `DELETE FROM raw_mails WHERE address IN (`
+            + `SELECT name FROM address WHERE ${addressQueryCondition})`
+        ),
+        c.env.DB.prepare(
+            `DELETE FROM sendbox WHERE address IN (`
+            + `SELECT name FROM address WHERE ${addressQueryCondition})`
+        ),
+        c.env.DB.prepare(
+            `DELETE FROM auto_reply_mails WHERE address IN (`
+            + `SELECT name FROM address WHERE ${addressQueryCondition})`
+        ),
+        c.env.DB.prepare(
+            `DELETE FROM address_sender WHERE address IN (`
+            + `SELECT name FROM address WHERE ${addressQueryCondition})`
+        ),
+        c.env.DB.prepare(
+            `DELETE FROM users_address WHERE address_id IN (`
+            + `SELECT id FROM address WHERE ${addressQueryCondition})`
+        ),
+        c.env.DB.prepare(`DELETE FROM address WHERE ${addressQueryCondition}`),
+    ]);
+    if (!results.every((result) => result.success)) {
+        throw new Error('Failed to atomically delete address data');
+    }
     return true;
 }
 
@@ -554,10 +638,11 @@ const batchDeleteAddressWithData = async (
 export const deleteAddressWithData = async (
     c: Context<HonoCustomType>,
     address: string | undefined | null,
-    address_id: number | undefined | null
+    address_id: number | undefined | null,
+    options?: { skipPermissionCheck?: boolean },
 ): Promise<boolean> => {
     const msgs = i18n.getMessagesbyContext(c);
-    if (!getBooleanValue(c.env.ENABLE_USER_DELETE_EMAIL)) {
+    if (!options?.skipPermissionCheck && !getBooleanValue(c.env.ENABLE_USER_DELETE_EMAIL)) {
         throw new Error(msgs.UserDeleteEmailDisabledMsg)
     }
     if (!address && !address_id) {
@@ -577,29 +662,29 @@ export const deleteAddressWithData = async (
     if (!address || !address_id) {
         throw new Error(msgs.AddressNotFoundMsg);
     }
-    // unbind telegram
-    await unbindTelegramByAddress(c, address);
-    // delete address and related data
-    const { success: mailSuccess } = await c.env.DB.prepare(
-        `DELETE FROM raw_mails WHERE address = ? `
-    ).bind(address).run();
-    const { success: sendAccess } = await c.env.DB.prepare(
-        `DELETE FROM address_sender WHERE address = ? `
-    ).bind(address).run();
-    const { success: sendboxSuccess } = await c.env.DB.prepare(
-        `DELETE FROM sendbox WHERE address = ? `
-    ).bind(address).run();
-    const { success: addressSuccess } = await c.env.DB.prepare(
-        `DELETE FROM users_address WHERE address_id = ? `
-    ).bind(address_id).run();
-    const { success: autoReplySuccess } = await c.env.DB.prepare(
-        `DELETE FROM auto_reply_mails WHERE address = ? `
-    ).bind(address).run();
-    const { success } = await c.env.DB.prepare(
-        `DELETE FROM address WHERE name = ? `
-    ).bind(address).run();
-    if (!success || !mailSuccess || !sendboxSuccess || !addressSuccess || !sendAccess || !autoReplySuccess) {
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(`DELETE FROM mail_flags WHERE address_id = ?`).bind(address_id),
+        c.env.DB.prepare(`DELETE FROM raw_mails WHERE address = ?`).bind(address),
+        c.env.DB.prepare(`DELETE FROM sendbox WHERE address = ?`).bind(address),
+        c.env.DB.prepare(`DELETE FROM auto_reply_mails WHERE address = ?`).bind(address),
+        c.env.DB.prepare(`DELETE FROM address_sender WHERE address = ?`).bind(address),
+        c.env.DB.prepare(`DELETE FROM users_address WHERE address_id = ?`).bind(address_id),
+        c.env.DB.prepare(
+            `DELETE FROM address WHERE id = ? AND name = ?`
+        ).bind(address_id, address),
+    ]);
+    const addressDeleteResult = results[results.length - 1];
+    if (!results.every((result) => result.success)
+        || addressDeleteResult.meta.changes !== 1
+    ) {
         throw new Error(msgs.OperationFailedMsg)
+    }
+    // KV is not transactional with D1. Remove the now-invalid Telegram token only
+    // after the database commit; a stale KV token cannot pass the D1 auth check.
+    try {
+        await unbindTelegramByAddress(c, address);
+    } catch (error) {
+        console.error(`Failed to remove Telegram binding for deleted address ${address}`, error);
     }
     return true;
 }

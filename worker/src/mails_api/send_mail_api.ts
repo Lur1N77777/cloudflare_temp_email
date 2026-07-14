@@ -9,11 +9,47 @@ import { CONSTANTS } from '../constants'
 import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDomainMapValue, getMailDomain, includesDomain } from '../utils';
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
-import { getSendBalanceState, requestSendMailAccess } from './send_balance';
-import { ensureSendMailLimit, increaseSendMailLimitCount } from './send_mail_limit_utils';
+import {
+    getSendBalanceState,
+    releaseSendBalance,
+    requestSendMailAccess,
+    reserveSendBalance,
+} from './send_balance';
+import { releaseSendMailLimit, reserveSendMailLimit } from './send_mail_limit_utils';
+import { validateAddressTokenAgainstDb } from '../auth_tokens';
+import {
+    InvalidIdempotencyKeyError,
+    beginOutboundSendRequest,
+    completeOutboundSendRequest,
+    failOutboundSendRequest,
+    resolveOutboundIdempotencyKey,
+} from './outbound_idempotency';
 
 
 export const api = new Hono<HonoCustomType>()
+
+type MailAttachment = {
+    filename: string;
+    content: string;
+    contentType?: string;
+    contentId?: string;
+};
+
+type SendMailPayload = {
+    from_name: string;
+    to_mail: string;
+    to_name: string;
+    subject: string;
+    content: string;
+    text?: string;
+    attachments?: MailAttachment[];
+    is_html: boolean;
+};
+
+type SendMailRequestPayload = SendMailPayload & {
+    idempotency_key?: unknown;
+    token?: string;
+};
 
 api.post('/api/request_send_mail_access', async (c) => {
     const msgs = i18n.getMessagesbyContext(c);
@@ -33,10 +69,7 @@ api.post('/api/request_send_mail_access', async (c) => {
 
 export const sendMailToVerifyAddress = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    }
+    reqJson: SendMailPayload
 ): Promise<void> => {
     const {
         from_name, to_mail, to_name,
@@ -46,6 +79,21 @@ export const sendMailToVerifyAddress = async (
     msg.setSender(from_name ? { name: from_name, addr: address } : address);
     msg.setRecipient(to_name ? { name: to_name, addr: to_mail } : to_mail);
     msg.setSubject(subject);
+    for (const attachment of reqJson.attachments || []) {
+        msg.addAttachment({
+            inline: Boolean(attachment.contentId),
+            filename: attachment.filename,
+            contentType: attachment.contentType || 'application/octet-stream',
+            data: attachment.content,
+            headers: attachment.contentId ? { 'Content-ID': attachment.contentId } : {},
+        });
+    }
+    if (is_html && reqJson.text) {
+        msg.addMessage({
+            contentType: 'text/plain',
+            data: reqJson.text
+        });
+    }
     msg.addMessage({
         contentType: is_html ? 'text/html' : 'text/plain',
         data: content
@@ -57,10 +105,7 @@ export const sendMailToVerifyAddress = async (
 
 export const sendMailByBinding = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    }
+    reqJson: SendMailPayload
 ): Promise<void> => {
     const {
         from_name, to_mail, to_name,
@@ -70,16 +115,13 @@ export const sendMailByBinding = async (
         from: from_name ? { email: address, name: from_name } : address,
         to: to_name ? [`${to_name} <${to_mail}>`] : [to_mail],
         subject,
-        ...(is_html ? { html: content } : { text: content }),
+        ...(is_html ? { html: content, ...(reqJson.text ? { text: reqJson.text } : {}) } : { text: content }),
     });
 }
 
 const sendMailByResend = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    }
+    reqJson: SendMailPayload
 ): Promise<void> => {
     const mailDomain = getMailDomain(address);
     const token = c.env[
@@ -90,8 +132,17 @@ const sendMailByResend = async (
         from: reqJson.from_name ? `${reqJson.from_name} <${address}>` : address,
         to: reqJson.to_name ? `${reqJson.to_name} <${reqJson.to_mail}>` : reqJson.to_mail,
         subject: reqJson.subject,
+        ...(reqJson.attachments?.length ? {
+            attachments: reqJson.attachments.map((attachment) => ({
+                filename: attachment.filename,
+                content: attachment.content,
+                contentType: attachment.contentType,
+                contentId: attachment.contentId,
+            })),
+        } : {}),
         ...(reqJson.is_html ? {
             html: reqJson.content,
+            ...(reqJson.text ? { text: reqJson.text } : {}),
         } : {
             text: reqJson.content,
         })
@@ -104,10 +155,7 @@ const sendMailByResend = async (
 
 const sendMailBySmtp = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    },
+    reqJson: SendMailPayload,
     smtpOptions: WorkerMailerOptions
 ): Promise<void> => {
     await WorkerMailer.send(
@@ -122,7 +170,7 @@ const sendMailBySmtp = async (
                 email: reqJson.to_mail
             },
             subject: reqJson.subject,
-            text: reqJson.is_html ? undefined : reqJson.content,
+            text: reqJson.is_html ? reqJson.text : reqJson.content,
             html: reqJson.is_html ? reqJson.content : undefined
         }
     )
@@ -130,10 +178,7 @@ const sendMailBySmtp = async (
 
 export const sendMail = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    },
+    reqJson: SendMailPayload,
     options?: {
         isAdmin?: boolean
     }
@@ -147,14 +192,6 @@ export const sendMail = async (
     const domains = getDomains(c);
     if (!includesDomain(domains, mailDomain)) {
         throw new Error(msgs.InvalidDomainMsg)
-    }
-    const sendBalanceState = await getSendBalanceState(c, address, {
-        isAdmin: options?.isAdmin,
-    });
-    if (sendBalanceState.needCheckBalance) {
-        if (!sendBalanceState.balance || sendBalanceState.balance <= 0) {
-            throw new Error(msgs.NoBalanceMsg)
-        }
     }
     const {
         from_name, to_mail, to_name,
@@ -174,9 +211,7 @@ export const sendMail = async (
     if (!content) {
         throw new Error(msgs.ContentEmptyMsg)
     }
-    await ensureSendMailLimit(c);
-
-    // send to verified address list, do not update balance
+    // Resolve the transport before reserving quota or balance.
     const resendEnabled = c.env.RESEND_TOKEN || c.env[
         `RESEND_TOKEN_${mailDomain.replace(/\./g, "_").toUpperCase()}`
     ];
@@ -188,43 +223,50 @@ export const sendMail = async (
     if (c.env.SEND_MAIL) {
         const verifiedAddressList = await getJsonSetting(c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY) || [];
         if (verifiedAddressList.includes(to_mail)) {
-            await sendMailToVerifyAddress(c, address, reqJson);
             sendByVerifiedAddressList = true;
         }
     }
     const sendMailBindingEnabled = isSendMailBindingEnabled(c, mailDomain);
-
-    // send mail workflow
-    if (sendByVerifiedAddressList) {
-        // do not update balance
-    }
-    // send by resend
-    else if (resendEnabled) {
-        await sendMailByResend(c, address, reqJson);
-    }
-    else if (smtpConfig) {
-        await sendMailBySmtp(c, address, reqJson, smtpConfig);
-    }
-    else if (sendMailBindingEnabled) {
-        await sendMailByBinding(c, address, reqJson);
-    }
-    else {
+    if (!sendByVerifiedAddressList
+        && !resendEnabled
+        && !smtpConfig
+        && !sendMailBindingEnabled
+    ) {
         throw new Error(`${msgs.EnableResendOrSmtpOrSendMailMsg} (${mailDomain})`);
     }
-    await increaseSendMailLimitCount(c);
 
-    // update balance
-    if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
-        try {
-            const { success } = await c.env.DB.prepare(
-                `UPDATE address_sender SET balance = balance - 1 where address = ?`
-            ).bind(address).run();
-            if (!success) {
-                console.warn(`Failed to update balance for ${address}`);
-            }
-        } catch (e) {
-            console.warn(`Failed to update balance for ${address}`);
+    const sendBalanceState = await getSendBalanceState(c, address, {
+        isAdmin: options?.isAdmin,
+    });
+    const quotaReservation = await reserveSendMailLimit(c);
+    let balanceReserved = false;
+
+    try {
+        if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
+            balanceReserved = await reserveSendBalance(c, address);
+            if (!balanceReserved) throw new Error(msgs.NoBalanceMsg);
         }
+
+        if (sendByVerifiedAddressList) {
+            await sendMailToVerifyAddress(c, address, reqJson);
+        } else if (resendEnabled) {
+            await sendMailByResend(c, address, reqJson);
+        } else if (smtpConfig) {
+            await sendMailBySmtp(c, address, reqJson, smtpConfig);
+        } else {
+            await sendMailByBinding(c, address, reqJson);
+        }
+    } catch (error) {
+        const releases: Promise<void>[] = [];
+        if (balanceReserved) releases.push(releaseSendBalance(c, address));
+        if (quotaReservation) releases.push(releaseSendMailLimit(c, quotaReservation));
+        const releaseResults = await Promise.allSettled(releases);
+        for (const releaseResult of releaseResults) {
+            if (releaseResult.status === 'rejected') {
+                console.error('Failed to compensate a send reservation', releaseResult.reason);
+            }
+        }
+        throw error;
     }
     // update address updated_at
     updateAddressUpdatedAt(c, address);
@@ -248,32 +290,132 @@ export const sendMail = async (
     }
 }
 
-api.post('/api/send_mail', async (c) => {
-    const { address } = c.get("jwtPayload")
-    const reqJson = await c.req.json();
+const getPublicSendMailErrorMessage = (
+    msgs: ReturnType<typeof i18n.getMessagesbyContext>,
+    error: unknown,
+): string => {
+    const message = error instanceof Error ? error.message : '';
+    return Object.values(msgs).includes(message)
+        ? message
+        : msgs.OperationFailedMsg;
+};
+
+const sendMailIdempotently = async (
+    c: Context<HonoCustomType>,
+    address: string,
+    reqJson: SendMailPayload,
+    bodyIdempotencyKey?: unknown,
+): Promise<'sent' | 'replayed' | 'unavailable'> => {
+    const idempotencyKey = resolveOutboundIdempotencyKey(
+        c.req.header('idempotency-key'),
+        bodyIdempotencyKey,
+    );
+    c.header('idempotency-key', idempotencyKey);
+    const outboundRequest = await beginOutboundSendRequest(
+        c.env.DB,
+        address,
+        idempotencyKey,
+        reqJson,
+    );
+    if (outboundRequest.state === 'completed') {
+        return 'replayed';
+    }
+    if (outboundRequest.state !== 'claimed') {
+        return 'unavailable';
+    }
+
     try {
         await sendMail(c, address, reqJson);
-    } catch (e) {
-        console.error("Failed to send mail", e);
-        return c.text(`Failed to send mail ${(e as Error).message}`, 400)
+    } catch (error) {
+        try {
+            await failOutboundSendRequest(c.env.DB, outboundRequest);
+        } catch (ledgerError) {
+            console.error('Failed to record outbound send failure', ledgerError);
+        }
+        throw error;
+    }
+    // Do not mark a delivered message as failed when this final ledger write
+    // fails: leaving it pending prevents a retry from delivering it twice.
+    await completeOutboundSendRequest(c.env.DB, outboundRequest);
+    return 'sent';
+};
+
+api.post('/api/send_mail', async (c) => {
+    const msgs = i18n.getMessagesbyContext(c);
+    const { address } = c.get("jwtPayload")
+    let reqJson: SendMailRequestPayload;
+    try {
+        reqJson = await c.req.json<SendMailRequestPayload>();
+    } catch (error) {
+        console.error('Invalid /api/send_mail JSON', error);
+        return c.text(msgs.InvalidInputMsg, 400);
+    }
+    const { idempotency_key: idempotencyKey, token: _token, ...mailPayload } = reqJson;
+    try {
+        const outcome = await sendMailIdempotently(
+            c,
+            address,
+            mailPayload,
+            idempotencyKey,
+        );
+        if (outcome === 'unavailable') {
+            return c.text(msgs.OperationFailedMsg, 409);
+        }
+    } catch (error) {
+        console.error("Failed to send mail", error);
+        if (error instanceof InvalidIdempotencyKeyError) {
+            return c.text(msgs.InvalidInputMsg, 400);
+        }
+        return c.text(getPublicSendMailErrorMessage(msgs, error), 400);
     }
     return c.json({ status: "ok" })
 })
 
 api.post('/external/api/send_mail', async (c) => {
     const msgs = i18n.getMessagesbyContext(c);
-    const { token } = await c.req.json();
+    let reqJson: SendMailRequestPayload;
     try {
-        const { address } = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+        reqJson = await c.req.json<SendMailRequestPayload>();
+    } catch (error) {
+        console.error('Invalid /external/api/send_mail JSON', error);
+        return c.text(msgs.InvalidInputMsg, 400);
+    }
+    const {
+        token,
+        idempotency_key: idempotencyKey,
+        ...mailPayload
+    } = reqJson;
+    if (typeof token !== 'string' || !token) {
+        return c.text(msgs.InvalidAddressCredentialMsg, 401);
+    }
+    let address;
+    try {
+        const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+        address = await validateAddressTokenAgainstDb(c.env.DB, payload);
         if (!address) {
-            return c.text(msgs.AddressNotFoundMsg, 400)
+            return c.text(msgs.InvalidAddressCredentialMsg, 401)
         }
-        const reqJson = await c.req.json();
-        await sendMail(c, address as string, reqJson);
-        return c.json({ status: "ok" })
-    } catch (e) {
-        console.error("Failed to send mail", e);
-        return c.text(`Failed to send mail ${(e as Error).message}`, 400)
+    } catch (error) {
+        console.warn('External send-mail credential validation failed', error);
+        return c.text(msgs.InvalidAddressCredentialMsg, 401);
+    }
+    try {
+        const outcome = await sendMailIdempotently(
+            c,
+            address.name,
+            mailPayload,
+            idempotencyKey,
+        );
+        if (outcome === 'unavailable') {
+            return c.text(msgs.OperationFailedMsg, 409);
+        }
+        return c.json({ status: "ok" });
+    } catch (error) {
+        console.error("Failed to send mail", error);
+        if (error instanceof InvalidIdempotencyKeyError) {
+            return c.text(msgs.InvalidInputMsg, 400);
+        }
+        return c.text(getPublicSendMailErrorMessage(msgs, error), 400);
     }
 })
 
@@ -302,12 +444,18 @@ api.delete('/api/sendbox/:id', async (c) => {
     if (!getBooleanValue(c.env.ENABLE_USER_DELETE_EMAIL)) {
         return c.text(msgs.UserDeleteEmailDisabledMsg, 403)
     }
-    const { address } = c.get("jwtPayload")
+    const { address, address_id } = c.get("jwtPayload")
     const { id } = c.req.param();
-    const { success } = await c.env.DB.prepare(
-        `DELETE FROM sendbox WHERE address = ? and id = ? `
-    ).bind(address, id).run();
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM mail_flags WHERE address_id = ? AND mailbox = 'SENT'`
+            + ` AND mail_id = ?`
+        ).bind(address_id, id),
+        c.env.DB.prepare(
+            `DELETE FROM sendbox WHERE address = ? AND id = ?`
+        ).bind(address, id),
+    ]);
     return c.json({
-        success: success
+        success: results.every((result) => result.success)
     })
 })

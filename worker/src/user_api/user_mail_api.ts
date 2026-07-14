@@ -34,13 +34,26 @@ export default {
         }
         const { id } = c.req.param();
         const { user_id } = c.get("userPayload");
-        const bindedAddressList = await UserBindAddressModule.getBindedAddressListById(c, user_id);
-        const { success } = await c.env.DB.prepare(
-            `DELETE FROM raw_mails WHERE id = ?`
-            + ` and address IN (${bindedAddressList.map(() => "?").join(",")})`
-        ).bind(id, ...bindedAddressList).run();
+        const results = await c.env.DB.batch([
+            c.env.DB.prepare(
+                `DELETE FROM mail_flags WHERE mailbox = 'INBOX' AND mail_id = ?`
+                + ` AND address_id IN (`
+                + `SELECT a.id FROM address a`
+                + ` JOIN users_address ua ON ua.address_id = a.id`
+                + ` JOIN raw_mails rm ON rm.id = ?`
+                + ` AND rm.address = a.name COLLATE NOCASE`
+                + ` WHERE ua.user_id = ?)`
+            ).bind(id, id, user_id),
+            c.env.DB.prepare(
+                `DELETE FROM raw_mails WHERE id = ? AND EXISTS (`
+                + `SELECT 1 FROM address a`
+                + ` JOIN users_address ua ON ua.address_id = a.id`
+                + ` WHERE ua.user_id = ?`
+                + ` AND a.name = raw_mails.address COLLATE NOCASE)`
+            ).bind(id, user_id),
+        ]);
         return c.json({
-            success: success
+            success: results.every((result) => result.success)
         })
     }
 }

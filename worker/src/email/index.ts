@@ -12,6 +12,38 @@ import { forwardEmail } from "./forward";
 import { EmailRuleSettings } from "../models";
 import { CONSTANTS } from "../constants";
 import { compressText } from "../gzip";
+import {
+    buildInboundDeliveryKey,
+    temporaryDeliveryFailure,
+} from './delivery_failure';
+
+type StoredMailColumn = 'raw' | 'raw_blob';
+
+const storeInboundMail = async (
+    env: Bindings,
+    message: ForwardableEmailMessage,
+    recipient: string,
+    messageId: string | null,
+    deliveryKey: string | null,
+    column: StoredMailColumn,
+    content: string | ArrayBuffer,
+): Promise<'stored' | 'duplicate'> => {
+    const result = await env.DB.prepare(
+        `INSERT INTO raw_mails (source, address, ${column}, message_id, delivery_key)`
+        + ` VALUES (?, ?, ?, ?, ?)`
+        + ` ON CONFLICT(delivery_key) WHERE delivery_key IS NOT NULL DO NOTHING`
+    ).bind(
+        message.from,
+        recipient,
+        content,
+        messageId,
+        deliveryKey,
+    ).run();
+    if (!result.success) throw new Error('D1 did not persist the inbound email');
+    if (result.meta.changes === 1) return 'stored';
+    if (deliveryKey && result.meta.changes === 0) return 'duplicate';
+    throw new Error('D1 did not persist the inbound email');
+};
 
 
 async function email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
@@ -67,7 +99,12 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
     const message_id = message.headers.get("Message-ID");
     // save email
     try {
-        let success = false;
+        const deliveryKey = await buildInboundDeliveryKey(
+            toAddress,
+            message.from,
+            message_id,
+        );
+        let storageOutcome: 'stored' | 'duplicate';
         if (getBooleanValue(env.ENABLE_MAIL_GZIP)) {
             let compressed: ArrayBuffer | null = null;
             try {
@@ -77,53 +114,63 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
             }
             if (compressed) {
                 try {
-                    ({ success } = await env.DB.prepare(
-                        `INSERT INTO raw_mails (source, address, raw_blob, message_id) VALUES (?, ?, ?, ?)`
-                    ).bind(
-                        message.from, toAddress, compressed, message_id
-                    ).run());
+                    storageOutcome = await storeInboundMail(
+                        env, message, toAddress, message_id, deliveryKey,
+                        'raw_blob', compressed,
+                    );
                 } catch (dbError) {
                     // Fallback to plaintext only if raw_blob column is missing (migration not applied)
                     const errMsg = String(dbError);
                     if (errMsg.includes('raw_blob') || errMsg.includes('no such column')) {
                         console.error("raw_blob column missing, falling back to plaintext", dbError);
-                        ({ success } = await env.DB.prepare(
-                            `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-                        ).bind(
-                            message.from, toAddress, parsedEmailContext.rawEmail, message_id
-                        ).run());
+                        storageOutcome = await storeInboundMail(
+                            env, message, toAddress, message_id, deliveryKey,
+                            'raw', parsedEmailContext.rawEmail,
+                        );
                     } else {
                         throw dbError;
                     }
                 }
             } else {
-                ({ success } = await env.DB.prepare(
-                    `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-                ).bind(
-                    message.from, toAddress, parsedEmailContext.rawEmail, message_id
-                ).run());
+                storageOutcome = await storeInboundMail(
+                    env, message, toAddress, message_id, deliveryKey,
+                    'raw', parsedEmailContext.rawEmail,
+                );
             }
         } else {
-            ({ success } = await env.DB.prepare(
-                `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-            ).bind(
-                message.from, toAddress, parsedEmailContext.rawEmail, message_id
-            ).run());
+            storageOutcome = await storeInboundMail(
+                env, message, toAddress, message_id, deliveryKey,
+                'raw', parsedEmailContext.rawEmail,
+            );
         }
-        if (!success) {
-            message.setReject(`Failed save message to ${toAddress}`);
-            console.error(`Failed save message from ${message.from} to ${toAddress}`);
+        const isDuplicate = storageOutcome === 'duplicate';
+        if (isDuplicate) {
+            console.log(`Skip duplicate inbound email ${message_id} for ${toAddress}`);
+            return;
         }
-    }
-    catch (error) {
-        console.error("save email error", error);
+    } catch (error) {
+        temporaryDeliveryFailure(toAddress, error);
     }
 
     // forward email
-    await forwardEmail(message, env);
+    try {
+        await forwardEmail(message, env);
+    } catch (error) {
+        console.error('forward email error', error);
+    }
 
     // AI email content extraction
-    const aiExtractResult = await extractEmailInfo(parsedEmailContext, env, message_id, toAddress);
+    let aiExtractResult: Awaited<ReturnType<typeof extractEmailInfo>> = null;
+    try {
+        aiExtractResult = await extractEmailInfo(
+            parsedEmailContext,
+            env,
+            message_id,
+            toAddress,
+        );
+    } catch (error) {
+        console.error('extract email info error', error);
+    }
 
     // send email to telegram
     try {
@@ -160,7 +207,11 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
     }
 
     // auto reply email
-    await auto_reply(message, env, toAddress);
+    try {
+        await auto_reply(message, env, toAddress);
+    } catch (error) {
+        console.error('auto reply email error', error);
+    }
 }
 
 export { email }

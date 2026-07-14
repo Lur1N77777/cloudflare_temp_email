@@ -6,6 +6,7 @@ import { getJsonSetting, getUserRoles } from "../utils"
 import { CONSTANTS } from "../constants";
 import { commonGetUserRole } from "../common";
 import { Jwt } from "hono/utils/jwt";
+import { buildUserRoleTokenPayload, buildUserTokenPayload } from "../auth_tokens";
 
 export default {
     openSettings: async (c: Context<HonoCustomType>) => {
@@ -46,24 +47,20 @@ export default {
             &&
             c.env.ADMIN_USER_ROLE === user_role?.role
         );
-        const access_token = user_role?.role ? await Jwt.sign({
+        const access_token = user_role?.role ? await Jwt.sign(buildUserRoleTokenPayload({
             user_email: user.user_email,
             user_id: user.user_id,
+            token_version: user.token_version,
             user_role: user_role.role,
-            iat: Math.floor(Date.now() / 1000),
-            // 1 hour
-            exp: Math.floor(Date.now() / 1000) + 3600,
-        }, c.env.JWT_SECRET, "HS256") : null;
+        }), c.env.JWT_SECRET, "HS256") : null;
         // create new if expired in 7 days
         const new_user_token = user.exp > (
             Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60
-        ) ? null : await Jwt.sign({
+        ) ? null : await Jwt.sign(buildUserTokenPayload({
+            id: user.user_id,
             user_email: user.user_email,
-            user_id: user.user_id,
-            // 30 days expire in seconds
-            exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-            iat: Math.floor(Date.now() / 1000),
-        }, c.env.JWT_SECRET, "HS256");
+            token_version: user.token_version,
+        }), c.env.JWT_SECRET, "HS256");
         // update address updated_at asynchronously
         c.executionCtx.waitUntil((async () => {
             try {

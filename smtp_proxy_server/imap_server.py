@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 import httpx
 from twisted.mail import imap4
@@ -14,8 +15,27 @@ from imap_http_client import BackendClient
 from imap_mailbox import SimpleMailbox
 
 _logger = logging.getLogger(__name__)
-_logger.setLevel(logging.DEBUG)
-logging.basicConfig(level=logging.DEBUG)
+_logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
+
+
+def redact_protocol_line(line):
+    """Return an IMAP protocol line safe for diagnostic logs."""
+    is_bytes = isinstance(line, bytes)
+    text = line.decode("utf-8", errors="replace") if is_bytes else str(line)
+    if re.match(r"^\S+\s+LOGIN(?:\s|$)", text, re.IGNORECASE):
+        command = re.match(r"^(\S+\s+LOGIN)", text, re.IGNORECASE).group(1)
+        safe = f"{command} *** ***"
+    elif re.match(r"^\S+\s+AUTHENTICATE(?:\s|$)", text, re.IGNORECASE):
+        match = re.match(
+            r"^(\S+\s+AUTHENTICATE\s+\S+)", text, re.IGNORECASE
+        )
+        safe = f"{match.group(1)} ***" if match else "AUTHENTICATE ***"
+    elif " " not in text.strip() and len(text.strip()) > 16:
+        safe = "***"
+    else:
+        safe = text
+    return safe.encode("utf-8") if is_bytes else safe
 
 
 class SimpleIMAPServer(imap4.IMAP4Server):
@@ -29,24 +49,15 @@ class SimpleIMAPServer(imap4.IMAP4Server):
         )
 
     def lineReceived(self, line):
-        _logger.debug("C: %s", line)
+        _logger.debug("C: %s", redact_protocol_line(line))
         return imap4.IMAP4Server.lineReceived(self, line)
 
     def sendLine(self, line):
-        _logger.debug("S: %s", line)
+        _logger.debug("S: %s", redact_protocol_line(line))
         return imap4.IMAP4Server.sendLine(self, line)
 
     def connectionMade(self):
-        """Wrap transport to log raw data sent to client."""
         imap4.IMAP4Server.connectionMade(self)
-        real_write_seq = self.transport.writeSequence
-        def logging_write_seq(data):
-            joined = b''.join(data)
-            for line in joined.split(b'\r\n'):
-                if line:
-                    _logger.debug("S-RAW: %s", line[:300])
-            return real_write_seq(data)
-        self.transport.writeSequence = logging_write_seq
 
     def _cbSelectWork(self, mbox, cmdName, tag):
         """Override to add UIDNEXT in SELECT response (RFC 3501)."""
@@ -149,15 +160,33 @@ class CustomChecker:
 
         if self._is_jwt(password):
             _logger.info("Login via JWT token")
-            return defer.succeed(json.dumps({
-                "username": username,
-                "password": password,
-            }))
+            return threads.deferToThread(
+                self._login_with_jwt, username, password
+            )
 
         # Not a JWT — try address+password login via backend
         _logger.info("Login via address+password")
         d = threads.deferToThread(self._login_with_password, username, password)
         return d
+
+    @staticmethod
+    def _login_with_jwt(username: str, token: str) -> str:
+        """Verify an address JWT with the backend before IMAP AUTH succeeds."""
+        res = httpx.get(
+            f"{settings.proxy_url}/api/settings",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "x-custom-auth": settings.basic_password,
+            },
+            timeout=settings.imap_http_timeout,
+        )
+        if res.status_code == 200:
+            address = str(res.json().get("address") or "").strip().lower()
+            if address and address == username.strip().lower():
+                return json.dumps({"username": username, "password": token})
+        raise cred_error.UnauthorizedLogin(
+            f"JWT verification failed: {res.status_code}"
+        )
 
     @staticmethod
     def _login_with_password(username: str, password: str) -> str:

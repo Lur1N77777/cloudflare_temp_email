@@ -144,7 +144,7 @@ def main() -> int:
         lines.append("[triggers]")
         lines.append(f"crons = [{toml_string(cron)}]")
 
-    jwt_secret = require_secret("TEMP_MAIL_JWT_SECRET", "JWT_SECRET")
+    require_secret("TEMP_MAIL_JWT_SECRET", "JWT_SECRET")
     admin_passwords = parse_json_array("TEMP_MAIL_ADMIN_PASSWORDS_JSON")
     if not admin_passwords:
         raise SystemExit(
@@ -172,10 +172,9 @@ def main() -> int:
     add_var(lines, "SEND_MAIL_DOMAINS", send_mail_domains)
     add_var(lines, "FRONTEND_URL", env("TEMP_MAIL_FRONTEND_URL"))
 
-    # Required sensitive vars for generated config. Do not rely on keep_vars here:
-    # Wrangler-managed [vars] can replace existing dashboard variables during deploy.
-    add_var(lines, "JWT_SECRET", jwt_secret)
-    add_var(lines, "ADMIN_PASSWORDS", admin_passwords)
+    # Sensitive values are uploaded by `wrangler secret bulk` after deployment.
+    # Do not render them into [vars]: Cloudflare rejects converting an existing
+    # plain/json binding to a secret with the same name.
     add_var(lines, "PASSWORDS", site_passwords)
 
     lines.append("")

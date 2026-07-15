@@ -139,6 +139,7 @@ dist
 # Cloudflare/local deployment state. Templates remain tracked.
 .wrangler/
 **/.wrangler/
+worker/dist-production/
 wrangler.toml
 **/wrangler.toml
 wrangler.*.toml

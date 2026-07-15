@@ -9,6 +9,13 @@ import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMa
 import i18n from './i18n';
 import { buildAddressTokenPayload } from './auth_tokens';
 import { hashUserPassword } from './security/user_password';
+import {
+    generateRandomPassword,
+    secureRandomIndex,
+    secureRandomString,
+} from './security/random';
+
+export { generateRandomPassword } from './security/random';
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
 const DEFAULT_RANDOM_SUBDOMAIN_LENGTH = 8;
@@ -89,7 +96,7 @@ export const generateRandomName = (c: Context<HonoCustomType>): string => {
     const buildName = (currentName: string = ""): string => {
         return currentName.length >= minLength
             ? currentName
-            : buildName(currentName + Math.random().toString(36).substring(2, 15));
+            : buildName(currentName + secureRandomString(13, "abcdefghijklmnopqrstuvwxyz0123456789"));
     };
 
     const fullName = buildName();
@@ -104,11 +111,7 @@ const generateRandomSubdomain = (c: Context<HonoCustomType>): string => {
         Math.max(getIntValue(c.env.RANDOM_SUBDOMAIN_LENGTH, DEFAULT_RANDOM_SUBDOMAIN_LENGTH), 1),
         63
     );
-    let subdomain = "";
-    for (let i = 0; i < length; i++) {
-        subdomain += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-    return subdomain;
+    return secureRandomString(length, charset);
 }
 
 const allowRandomSubdomainForDomain = (
@@ -258,15 +261,6 @@ export function updateAddressUpdatedAt(
             console.warn("[updateAddressUpdatedAt] failed:", address, e);
         }
     })());
-}
-
-export const generateRandomPassword = (): string => {
-    const charset = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let password = "";
-    for (let i = 0; i < 8; i++) {
-        password += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-    return password;
 }
 
 const generatePasswordForAddress = async (
@@ -420,7 +414,7 @@ export const newAddress = async (
         if (createAddressDefaultDomainFirst) {
             domain = normalizeDomainValue(allowDomains[0]);
         } else {
-            domain = normalizeDomainValue(allowDomains[Math.floor(Math.random() * allowDomains.length)]);
+            domain = normalizeDomainValue(allowDomains[secureRandomIndex(allowDomains.length)]);
         }
     } else if (typeof domain === "string") {
         domain = normalizeDomainValue(domain);

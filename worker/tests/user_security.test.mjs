@@ -16,6 +16,7 @@ import {
     generateRegistrationCode,
     normalizeUserEmail,
 } from '../src/user_api/registration_security.ts';
+import { generateRandomPassword } from '../src/security/random.ts';
 
 test('PBKDF2 work factor stays within the Cloudflare Workers runtime limit', () => {
     assert.equal(PASSWORD_HASH_ITERATIONS, 100_000);
@@ -75,6 +76,24 @@ test('verification codes use WebCrypto and always have six digits', () => {
         for (let index = 0; index < 100; index += 1) {
             assert.match(generateRegistrationCode(), /^\d{6}$/);
         }
+    } finally {
+        Math.random = originalRandom;
+    }
+});
+
+test('generated address passwords use WebCrypto and keep the public format', () => {
+    const originalRandom = Math.random;
+    Math.random = () => {
+        throw new Error('Math.random must not be used for address passwords');
+    };
+    try {
+        const values = new Set();
+        for (let index = 0; index < 100; index += 1) {
+            const password = generateRandomPassword();
+            assert.match(password, /^[a-z0-9]{8}$/);
+            values.add(password);
+        }
+        assert.ok(values.size > 1);
     } finally {
         Math.random = originalRandom;
     }

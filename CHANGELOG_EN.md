@@ -28,6 +28,7 @@
 - fix: |Outbound mail| Add a payload-bound idempotency ledger to `/api/send_mail`, `/external/api/send_mail`, and admin send paths; conditionally reserve balances and daily/monthly quotas atomically and compensate provider failures, preventing concurrent retries from duplicating delivery, charging twice, or producing a negative balance
 - fix: |Inbound mail| Add deterministic `delivery_key` values and a D1 unique constraint for atomic delivery deduplication; persistence failures now produce temporary delivery failures so upstream can retry instead of permanently rejecting a recoverable error
 - fix: |Error handling| Return sanitized top-level Worker 500 responses with request IDs, and stop exposing provider or internal error details from public and external send endpoints
+- fix: |Randomness security| Use an unbiased Web Crypto CSPRNG for address passwords, random mailbox names, random subdomains, and domain selection; use a 256-bit random OAuth state value
 
 ### Testing
 

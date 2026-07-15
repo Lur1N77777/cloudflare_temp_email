@@ -1,20 +1,11 @@
 name: Deploy Frontend
 
 on:
-  workflow_run:
-    workflows: [Upstream Sync]
-    types: [completed]
-  push:
-    tags:
-      - "*"
   workflow_dispatch:
 
 jobs:
   deploy-frontend:
     runs-on: ubuntu-latest
-    if: >
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -31,8 +22,11 @@ jobs:
           run_install: false
 
       - name: Deploy Frontend for ${{ github.ref_name }}
-        if: ${{ env.FRONTEND_NAME != '' }}
         run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$FRONTEND_NAME" ]; then
+            echo "CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and TEMP_MAIL_FRONTEND_NAME are required."
+            exit 1
+          fi
           cd frontend/
           pnpm install --no-frozen-lockfile
           if [ -n "$FRONTEND_ENV_CONTENT" ]; then
@@ -49,8 +43,6 @@ jobs:
             fi
             printf 'VITE_API_BASE=%s\nVITE_CF_WEB_ANALY_TOKEN=%s\nVITE_IS_TELEGRAM=false\n' "$api_base" "$VITE_CF_WEB_ANALY_TOKEN" > .env.prod
           fi
-          echo "Frontend env preview:"
-          sed -E 's/(TOKEN=).*/\1/' .env.prod
           pnpm exec wrangler pages project create "$FRONTEND_NAME" --production-branch production || true
           export frontend_branch="$FRONTEND_BRANCH"
           if [ -n "$frontend_branch" ]; then
@@ -60,11 +52,11 @@ jobs:
             echo "Deploying branch production"
             pnpm run deploy --project-name=$FRONTEND_NAME
           fi
-          echo "Deployed for tag ${{ github.ref_name }}"
+          echo "Deployed commit ${{ github.sha }}"
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          FRONTEND_NAME: ${{ secrets.FRONTEND_NAME || vars.TEMP_MAIL_FRONTEND_NAME || 'cloudflare-temp-email' }}
+          FRONTEND_NAME: ${{ secrets.FRONTEND_NAME || vars.TEMP_MAIL_FRONTEND_NAME }}
           FRONTEND_ENV_CONTENT: ${{ secrets.FRONTEND_ENV }}
           FRONTEND_BRANCH: ${{ secrets.FRONTEND_BRANCH || vars.FRONTEND_BRANCH }}
           TEMP_MAIL_FRONTEND_API_BASE: ${{ vars.TEMP_MAIL_FRONTEND_API_BASE }}
@@ -73,9 +65,6 @@ jobs:
 
   deploy-telegram-frontend:
     runs-on: ubuntu-latest
-    if: >
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -95,9 +84,9 @@ jobs:
         if: ${{ env.TG_FRONTEND_NAME != '' }}
         run: |
           cd frontend/
-          echo "${{ secrets.FRONTEND_ENV }}" > .env.prod
+          printf '%s\n' "$FRONTEND_ENV_CONTENT" > .env.prod
           pnpm install --no-frozen-lockfile
-          export frontend_branch="${{ secrets.FRONTEND_BRANCH }}"
+          export frontend_branch="$FRONTEND_BRANCH"
           if [ -n "$frontend_branch" ]; then
             echo "Deploying telegram mini app branch $frontend_branch"
             pnpm run deploy:actions:telegram --project-name=$TG_FRONTEND_NAME --branch $frontend_branch
@@ -105,8 +94,10 @@ jobs:
             echo "Deploying telegram mini app branch production"
             pnpm run deploy:telegram --project-name=$TG_FRONTEND_NAME
           fi
-          echo "Deployed telegram mini app for ${{ github.ref_name }}"
+          echo "Deployed telegram mini app for commit ${{ github.sha }}"
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TG_FRONTEND_NAME: ${{ secrets.TG_FRONTEND_NAME }}
+          FRONTEND_ENV_CONTENT: ${{ secrets.FRONTEND_ENV }}
+          FRONTEND_BRANCH: ${{ secrets.FRONTEND_BRANCH || vars.FRONTEND_BRANCH }}

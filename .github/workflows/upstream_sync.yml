@@ -1,0 +1,67 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    # 03:00 Asia/Shanghai (19:00 UTC)
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  open-sync-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Merge upstream into a review branch
+        id: sync
+        env:
+          SYNC_BRANCH: automation/upstream-sync
+          UPSTREAM_REPOSITORY: dreamhunter2333/cloudflare_temp_email
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Fork main already contains upstream/main."
+            exit 0
+          fi
+
+          git fetch origin "$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" || true
+          git switch -C "$SYNC_BRANCH" main
+          git merge --no-ff --no-edit upstream/main
+          git push --force-with-lease origin "HEAD:$SYNC_BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or refresh upstream sync PR
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_BRANCH: automation/upstream-sync
+        run: |
+          set -euo pipefail
+          pr_number="$(gh pr list --base main --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$pr_number" ]; then
+            gh pr create \
+              --base main \
+              --head "$SYNC_BRANCH" \
+              --title "chore: sync upstream main" \
+              --body $'Automated, reviewable merge of upstream `main`.\n\nDo not merge until tests, migrations, authentication changes, and Fork-specific conflicts have been reviewed.'
+          else
+            gh pr comment "$pr_number" --body "Upstream sync branch refreshed at ${GITHUB_SHA}. Please re-run the release gate before merging."
+          fi

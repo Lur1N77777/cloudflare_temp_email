@@ -1,201 +1,86 @@
-<!-- markdownlint-disable-file MD033 MD045 -->
-# Cloudflare Temp Email - Free Temporary Email Service
+<!-- markdownlint-disable-file MD033 -->
+# Cloudflare Temp Email · Loven7 Fork
 
-<p align="center">
-  <a href="https://temp-mail-docs.awsl.uk" target="_blank">
-    <img alt="docs" src="https://img.shields.io/badge/docs-grey?logo=vitepress">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest" target="_blank">
-    <img src="https://img.shields.io/github/v/release/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/LICENSE" target="_blank">
-    <img alt="MIT License" src="https://img.shields.io/github/license/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/graphs/contributors" target="_blank">
-   <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="">
-    <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="">
-    <img src="https://img.shields.io/github/last-commit/dreamhunter2333/cloudflare_temp_email">
-  </a>
-</p>
+> This is a **Loven7-maintained fork** of Cloudflare Temp Email. It adds production-oriented authentication, concurrency safety, account management, and maintainable release automation. The public repository contains generic source and examples only—never maintainer domains, Cloudflare resource IDs, passwords, tokens, or private deployment files.
 
-<p align="center">
-  <a href="https://hellogithub.com/repository/2ccc64bb1ba346b480625f584aa19eb1" target="_blank">
-    <img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=2ccc64bb1ba346b480625f584aa19eb1&claim_uid=FxNypXK7UQ9OECT" alt="Featured｜HelloGitHub" height="30"/>
-  </a>
-</p>
+[中文](README.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG_EN.md) · [Releases](https://github.com/Lur1N77777/cloudflare_temp_email/releases)
 
-<p align="center">
-  <a href="README.md">中文文档</a> |
-  <a href="README_EN.md">English Document</a>
-</p>
+## Project relationships
 
-> This project is for learning and personal use only. Please do not use it for any illegal activities, or you will be responsible for the consequences.
+| Project | Purpose | Boundary |
+| --- | --- | --- |
+| [Upstream](https://github.com/dreamhunter2333/cloudflare_temp_email) | Original Cloudflare temporary-email implementation | Upstream changes arrive through reviewable sync PRs; unreviewed upstream commits are never treated as production-ready here |
+| This repository | Worker, D1, Email Routing, and upstream Vue frontend | Public core maintained by Loven7; deployable on its own and API-compatible with the optional suite |
+| [Loven7 Mail Cloudflare Suite](https://github.com/Lur1N77777/loven7-mail-cloudflare-suite) | Optional enhanced admin UI and webmail | Independently configured and released; not required to run this repository |
 
-**A fully-featured temporary email service!**
+Fork-specific maintenance includes token revocation, login throttling, atomic registration challenges and quotas, send idempotency, inbound deduplication, cursor pagination, persistent mail flags, safe logging, and release automation. See the [fork release policy](docs/fork-release-policy.md) for support boundaries.
 
-- **Completely Free** - Built on Cloudflare's free services with zero cost
-- **High Performance** - Rust WASM email parsing for extremely fast response
-- **Modern UI** - Responsive design with multi-language support and easy operation
-- **Address Password** - Support setting individual passwords for email addresses to enhance security
-- **Agent-friendly** - Built-in mailbox [`skill`](skills/cf-temp-mail-agent-mail/SKILL.md) for AI agents
-- **Mobile admin** - Community client [CloudMail](https://github.com/Lur1N77777/CloudMail) for Android admin and mailbox management
+## Capabilities
 
-## Deployment Documentation - Quick Start
+- Cloudflare Workers, D1, Email Routing, and optional Pages—no persistent server.
+- Vue 3 responsive UI, admin console, user accounts, and mailbox passwords.
+- Receiving, sending, attachments, forwarding, webhooks, Telegram, and an SMTP/IMAP proxy.
+- PBKDF2 password hardening, JWT type/version validation, and D1-backed concurrency controls.
+- Optional R2/S3, Workers AI, Turnstile, Resend, and Cloudflare `send_email` binding.
 
-[Documentation](https://temp-mail-docs.awsl.uk) | [Github Action Deployment Guide](https://temp-mail-docs.awsl.uk/en/guide/actions/github-action.html)
+## Deploy
 
-<a href="https://temp-mail-docs.awsl.uk/en/guide/actions/github-action.html">
-  <img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare Workers" height="32">
-</a>
+For a first deployment, use the [GitHub Actions guide](docs/github-actions-auto-deploy.md). For a fully manual deployment:
 
-## Changelog
-
-See [CHANGELOG](CHANGELOG.md) for the latest updates.
-
-## Live Demo
-
-Try it now → [https://mail.awsl.uk/](https://mail.awsl.uk/)
-
-<details>
-<summary>Service Status Monitoring (Click to expand/collapse)</summary>
-
-|                                            |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Backend](https://temp-email-api.awsl.uk/) | [![Deploy Backend Production](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/backend_deploy.yaml/badge.svg)](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/backend_deploy.yaml) ![](https://uptime.aks.awsl.icu/api/badge/10/status) ![](https://uptime.aks.awsl.icu/api/badge/10/uptime) ![](https://uptime.aks.awsl.icu/api/badge/10/ping) ![](https://uptime.aks.awsl.icu/api/badge/10/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/10/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/10/response) |
-| [Frontend](https://mail.awsl.uk/)          | [![Deploy Frontend](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/frontend_deploy.yaml/badge.svg)](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/frontend_deploy.yaml) ![](https://uptime.aks.awsl.icu/api/badge/12/status) ![](https://uptime.aks.awsl.icu/api/badge/12/uptime) ![](https://uptime.aks.awsl.icu/api/badge/12/ping) ![](https://uptime.aks.awsl.icu/api/badge/12/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/12/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/12/response)         |
-
-</details>
-
-<details>
-<summary>Star History (Click to expand/collapse)</summary>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date&theme=dark" />
-  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date" />
-  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date" />
-</picture>
-
-</details>
-
-<details open>
-<summary>Table of Contents (Click to expand/collapse)</summary>
-
-- [Cloudflare Temp Email - Free Temporary Email Service](#cloudflare-temp-email---free-temporary-email-service)
-  - [Deployment Documentation - Quick Start](#deployment-documentation---quick-start)
-  - [Changelog](#changelog)
-  - [Live Demo](#live-demo)
-  - [Core Features](#core-features)
-    - [Email Processing](#email-processing)
-    - [User Management](#user-management)
-    - [Admin Features](#admin-features)
-    - [Multi-language \& Interface](#multi-language--interface)
-    - [Integration \& Extensions](#integration--extensions)
-  - [Technical Architecture](#technical-architecture)
-    - [System Architecture](#system-architecture)
-    - [Tech Stack](#tech-stack)
-    - [Main Components](#main-components)
-  - [Join the Community](#join-the-community)
-
-</details>
-
-## Core Features
-
-<details open>
-<summary>Core Features Details (Click to expand/collapse)</summary>
-
-### Email Processing
-
-- [x] Use `rust wasm` to parse emails, with fast parsing speed. Almost all emails can be parsed. Even emails that Node.js parsing modules fail to parse can be successfully parsed by rust wasm
-- [x] **AI Email Recognition** - Use Cloudflare Workers AI to automatically extract verification codes, authentication links, service links and other important information from emails
-- [x] Support optional random second-level subdomain mailbox creation for selected base domains
-- [x] Support sending emails with `DKIM` verification
-- [x] Support multiple sending methods such as `SMTP` and `Resend`
-- [x] Add attachment viewing feature with support for displaying attachment images
-- [x] Support S3 attachment storage and deletion
-- [x] Spam detection and blacklist/whitelist configuration
-- [x] Email forwarding feature with global forwarding address support
-
-### User Management
-
-- [x] Use `credentials` to log in to previously used mailboxes
-- [x] Add complete user registration and login functionality. Users can bind email addresses and automatically obtain email JWT credentials to switch between different mailboxes after binding
-- [x] Support `OAuth2` third-party login (Github, Authentik, etc.)
-- [x] Support `Passkey` passwordless login
-- [x] User role management with support for multi-role domain and prefix configuration
-- [x] User inbox viewing with address and keyword filtering support
-
-### Admin Features
-
-- [x] Complete admin console
-- [x] Create mailboxes without prefix in `admin` backend
-- [x] Admin user management page with user address viewing feature
-- [x] Scheduled cleanup function with support for multiple cleanup strategies
-- [x] Get mailboxes with custom names, `admin` can configure blacklist
-- [x] Add access password for use as a private site
-
-### Multi-language & Interface
-
-- [x] Both frontend and backend support multi-language
-- [x] Modern UI design with responsive layout
-- [x] Google Ads integration support
-- [x] Use shadow DOM to prevent style pollution
-- [x] Support URL JWT parameter auto-login
-
-### Integration & Extensions
-
-- [x] Complete `Telegram Bot` support, `Telegram` push notifications, and Telegram Bot mini app
-- [x] Add `SMTP proxy server` supporting `SMTP` for sending emails and `IMAP` for viewing emails
-- [x] Webhook support and message push integration
-- [x] Support `CF Turnstile` CAPTCHA verification
-- [x] Rate limiting configuration to prevent abuse
-- [x] **Agent-friendly**: bundled [`cf-temp-mail-agent-mail`](skills/cf-temp-mail-agent-mail/SKILL.md) skill lets AI agents consume a mailbox directly, see [docs](vitepress-docs/docs/en/guide/feature/agent-email.md)
-- [x] Community mobile admin client: [CloudMail](https://github.com/Lur1N77777/CloudMail) is built with Expo / React Native for this project's compatible API, providing an Android admin console, address management, inbox/sent/unknown mail, quick verification-code copy, OLED black theme, and local grouping.
-
-</details>
-
-## Technical Architecture
-
-<details>
-<summary>Technical Architecture Details (Click to expand/collapse)</summary>
-
-### System Architecture
-
-- **Database**: Cloudflare D1 as the main database
-- **Frontend Deployment**: Deploy frontend using Cloudflare Pages
-- **Backend Deployment**: Deploy backend using Cloudflare Workers
-- **Email Routing**: Use Cloudflare Email Routing
-
-### Tech Stack
-
-- **Frontend**: Vue 3 + Vite + TypeScript
-- **Backend**: TypeScript + Cloudflare Workers
-- **Email Parsing**: Rust WASM (mail-parser-wasm)
-- **Database**: Cloudflare D1 (SQLite)
-- **Storage**: Cloudflare KV + R2 (optional S3)
-- **Proxy Service**: Python SMTP/IMAP Proxy Server
-
-### Main Components
-
-- **Worker**: Core backend service
-- **Frontend**: Vue 3 user interface
-- **Mail Parser WASM**: Rust email parsing module
-- **SMTP Proxy Server**: Python email proxy service
-- **Pages Functions**: Cloudflare Pages middleware
-- **Documentation**: VitePress documentation site
-
-</details>
-
-### Important Notes
-
-- When adding domain records in Resend, if your DNS provider is hosting your 3rd level domain a.b.com, please remove the 2nd level domain prefix b from the default name generated by Resend, otherwise it will add a.b.b.com, causing verification to fail. After adding the record, you can verify it using:
 ```bash
-nslookup -qt="mx" a.b.com 1.1.1.1
+corepack enable
+pnpm dlx wrangler login
+git clone https://github.com/Lur1N77777/cloudflare_temp_email.git
+cd cloudflare_temp_email/worker
+pnpm install --frozen-lockfile
+pnpm exec wrangler d1 create temp-email-db
+pnpm exec wrangler d1 execute temp-email-db --file=../db/schema.sql --remote
 ```
 
-## Join the Community
+Copy `worker/wrangler.toml.template` to `worker/wrangler.toml`, then set the Worker name, `DOMAINS`, `DEFAULT_DOMAINS`, D1 name, and D1 ID. The local TOML is ignored by Git and must never be committed.
 
-- [Telegram](https://t.me/cloudflare_temp_email)
+```bash
+pnpm exec wrangler secret put JWT_SECRET
+pnpm exec wrangler secret put ADMIN_PASSWORDS
+pnpm run lint
+pnpm test
+pnpm run deploy
+```
+
+Point a Cloudflare Email Routing Catch-all rule to the Worker. To deploy the bundled frontend:
+
+```bash
+cd ../frontend
+pnpm install --frozen-lockfile
+cp .env.example .env.prod
+# Set VITE_API_BASE=https://api.example.com in .env.prod
+pnpm run build
+pnpm exec wrangler pages deploy dist --project-name temp-email-web
+```
+
+On PowerShell, use `Copy-Item .env.example .env.prod`. Validate the public settings endpoint, address creation, receiving, and admin login. If user registration is enabled, also validate verification mail and account login.
+
+## Verification-email branding
+
+The public default uses a text wordmark and has no external image dependency. Optional Worker variables:
+
+```toml
+VERIFICATION_MAIL_BRAND_NAME = "Example Mail"
+VERIFICATION_MAIL_LOGO_URL = "https://assets.example.com/mail-logo.png"
+```
+
+Only public HTTPS logo URLs are accepted; an invalid or missing URL safely falls back to text.
+
+## AI Agent deployment prompt
+
+The Chinese README contains a detailed copy-ready Agent prompt. Its non-negotiable controls are: read repository instructions first; inventory before mutation; never print or persist secrets; never overwrite same-name resources; back up existing D1 databases; reject unresolved placeholders; run frozen install, lint, tests, and build; deploy Worker before frontend; verify with disposable data; and report only redacted resource information.
+
+## Development, security, and release
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Never commit `.dev.vars`, `wrangler.toml`, database exports, private domains, or credentials. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+Upstream sync creates a reviewable PR and never deploys. Fork releases use `v<upstream>-loven7.<revision>`. Pushing a version tag builds assets, creates SHA-256 checksums, and creates or updates the GitHub Release. Details are in [docs/fork-release-policy.md](docs/fork-release-policy.md).
+
+## License and attribution
+
+Licensed under the [MIT License](LICENSE). Thanks to [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) and all upstream contributors; this fork preserves upstream copyright and history.

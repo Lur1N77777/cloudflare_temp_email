@@ -12,7 +12,7 @@
 
 - feat: |Frontend| Add a "Full-width mailbox list view" toggle in Appearance settings. When enabled, the mailbox shows a full-width list of subjects and body previews by default; clicking a mail expands it into the two-pane split view, clicking the same mail again returns to the list view; in multi-select mode, clicking a mail updates both its checked state and the right-side preview while disabling same-mail collapse, and the split width still follows the "Left list width in two-column mailbox view" setting. Defaults to off, preserving the original two-pane behavior
 - feat: |Frontend| Add "Body Preview Lines" in Appearance settings for the full-width mailbox list view, allowing runtime control over the body-preview clamp. It defaults to 2 lines, and 0 disables previews
-- perf: |User registration| Upgrade registration verification emails to a branded bilingual Loven7 Mail template with a prominent code card, five-minute expiry and security guidance, plus a plain-text alternative for HTML messages
+- perf: |User registration| Upgrade registration verification emails to a configurable, minimal template with a prominent code card, five-minute expiry and security guidance, plus a plain-text alternative for HTML messages; the public default uses a reliable text identity with an optional safe HTTPS logo
 - feat: |Authentication| Add `typ`, `sub`, `exp`, and database-backed `token_version` validation to Address and User JWTs; changing an address password or resetting a user password now revokes old tokens immediately while preserving compatibility for version-0 credentials that have not been rotated
 - feat: |Mail API / IMAP| Add bounded `/api/mail_ids`, `/api/mail_details`, and `/api/mail_flags` endpoints with consistent `INBOX` / `SENT` support, stable cursors, and persistent system flags; IMAP now uses lightweight cursor pages and batched details instead of offset-scanning the full mailbox, and can access sent items
 
@@ -36,6 +36,9 @@
 ### Improvements
 
 - feat: |Frontend| Lower the "Left list width in two-column mailbox view" minimum from 0.25 to 0 so the left list pane can fully collapse for a near-fullscreen content view, with a 0 mark added; applies to both the inbox and send-box two-pane splits, and clarifies the Appearance setting label so it is clear the value controls the left mail list width
+- docs: |Public Fork| Rewrite the Chinese and English READMEs and deployment guide to clarify the upstream, Worker core, and optional management-suite relationship; add a security policy, contribution guide, PR template, Fork release policy, and a copy-ready AI Agent deployment contract
+- fix: |Release| Make upstream sync open a reviewable PR instead of deploying automatically; tag builds now create a GitHub Release, upload generic artifacts, and include SHA-256 checksums
+- fix: |Deployment security| Make Worker and frontend deployment workflows manual-only with explicit resource names; initialize only newly created empty D1 databases, and deploy JWT, admin/site passwords, and provider tokens atomically with Worker code through `--secrets-file` instead of briefly publishing a secretless version or storing site passwords as plain variables
 
 ## v1.9.0
 

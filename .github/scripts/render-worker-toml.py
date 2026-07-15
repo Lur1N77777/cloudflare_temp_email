@@ -91,9 +91,15 @@ def add_var(lines: list[str], key: str, value: Any, *, include_empty: bool = Fal
 
 
 def main() -> int:
-    worker_name = env("TEMP_MAIL_WORKER_NAME", "cloudflare_temp_email")
+    worker_name = env("TEMP_MAIL_WORKER_NAME")
+    if not worker_name:
+        print("TEMP_MAIL_WORKER_NAME 为空，必须显式指定 Worker 名称", file=sys.stderr)
+        return 2
     worker_route = env("TEMP_MAIL_WORKER_ROUTE")
-    d1_name = env("D1_DATABASE_NAME", env("TEMP_MAIL_D1_NAME", "cloudflare_temp_email"))
+    d1_name = env("D1_DATABASE_NAME", env("TEMP_MAIL_D1_NAME"))
+    if not d1_name:
+        print("TEMP_MAIL_D1_NAME 为空，必须显式指定 D1 名称", file=sys.stderr)
+        return 2
     d1_id = env("D1_DATABASE_ID")
     if not d1_id:
         print("D1_DATABASE_ID 为空，无法生成 Worker D1 绑定", file=sys.stderr)
@@ -151,8 +157,6 @@ def main() -> int:
             "TEMP_MAIL_ADMIN_PASSWORDS_JSON 为空，自动生成 wrangler.toml 时必须配置至少一个管理员密码。"
             "例如：[\"your-admin-password\"]。"
         )
-    site_passwords = parse_json_array("TEMP_MAIL_PASSWORDS_JSON")
-
     lines.append("")
     lines.append("[vars]")
     add_var(lines, "PREFIX", env("TEMP_MAIL_PREFIX"), include_empty=True)
@@ -171,11 +175,11 @@ def main() -> int:
     add_var(lines, "NO_LIMIT_SEND_ROLE", env("TEMP_MAIL_NO_LIMIT_SEND_ROLE", "admin"))
     add_var(lines, "SEND_MAIL_DOMAINS", send_mail_domains)
     add_var(lines, "FRONTEND_URL", env("TEMP_MAIL_FRONTEND_URL"))
+    add_var(lines, "VERIFICATION_MAIL_BRAND_NAME", env("TEMP_MAIL_VERIFICATION_MAIL_BRAND_NAME"))
+    add_var(lines, "VERIFICATION_MAIL_LOGO_URL", env("TEMP_MAIL_VERIFICATION_MAIL_LOGO_URL"))
 
-    # Sensitive values are uploaded by `wrangler secret bulk` after deployment.
-    # Do not render them into [vars]: Cloudflare rejects converting an existing
-    # plain/json binding to a secret with the same name.
-    add_var(lines, "PASSWORDS", site_passwords)
+    # Authentication values are supplied atomically with `wrangler deploy
+    # --secrets-file`. Never render them into [vars].
 
     lines.append("")
     lines.append("[[d1_databases]]")

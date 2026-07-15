@@ -24,7 +24,7 @@ jobs:
           run_install: false
 
       - name: Build Frontend
-        run: cd frontend && pnpm install --no-frozen-lockfile && pnpm build:release
+        run: cd frontend && pnpm install --frozen-lockfile && pnpm test && pnpm build:release
 
       - name: Zip Frontend dist
         run: cd frontend/dist/ && zip -r frontend.zip * && mv frontend.zip ../
@@ -53,7 +53,7 @@ jobs:
           run_install: false
 
       - name: Build Telegram Frontend
-        run: cd frontend && pnpm install --no-frozen-lockfile && pnpm build:telegram:release
+        run: cd frontend && pnpm install --frozen-lockfile && pnpm build:telegram:release
 
       - name: Zip Telegram Frontend dist
         run: cd frontend/dist/ && zip -r telegram-frontend.zip * && mv telegram-frontend.zip ../
@@ -85,7 +85,7 @@ jobs:
         run: cd worker && cp wrangler.toml.template wrangler.toml
 
       - name: Build Backend
-        run: cd worker && pnpm install --no-frozen-lockfile && pnpm build
+        run: cd worker && pnpm install --frozen-lockfile && pnpm run lint && pnpm test && pnpm build
 
       - name: Move worker.js
         run: cd worker/dist && mv worker.js ../
@@ -126,13 +126,22 @@ jobs:
         with:
           path: artifacts
 
-      - name: Upload Assets to Release
+      - name: Prepare release assets and checksums
         run: |
-          gh release upload "${{ github.ref_name }}" \
-            artifacts/frontend/frontend.zip \
-            artifacts/telegram-frontend/telegram-frontend.zip \
-            artifacts/worker-js/worker.js \
-            artifacts/worker-wasm/worker-with-wasm-mail-parser.zip \
-            --clobber
+          mkdir release-assets
+          cp artifacts/frontend/frontend.zip release-assets/
+          cp artifacts/telegram-frontend/telegram-frontend.zip release-assets/
+          cp artifacts/worker-js/worker.js release-assets/
+          cp artifacts/worker-wasm/worker-with-wasm-mail-parser.zip release-assets/
+          cd release-assets
+          sha256sum frontend.zip telegram-frontend.zip worker.js worker-with-wasm-mail-parser.zip > SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release create "$TAG_NAME" --verify-tag --title "$TAG_NAME" --generate-notes
+          fi
+          gh release upload "$TAG_NAME" release-assets/* --clobber

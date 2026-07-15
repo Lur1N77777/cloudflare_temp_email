@@ -1,0 +1,213 @@
+name: Deploy Backend
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cloudflare-worker-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v5
+        name: Install pnpm
+        id: pnpm-install
+        with:
+          version: 10
+          run_install: false
+
+      - name: Deploy Backend for ${{ github.ref_name }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required."
+            exit 1
+          fi
+          if [ -z "$WRANGLER_TOML_CONTENT" ]; then
+            missing=()
+            [ -z "$TEMP_MAIL_WORKER_NAME" ] && missing+=("TEMP_MAIL_WORKER_NAME")
+            [ -z "$TEMP_MAIL_D1_NAME" ] && missing+=("TEMP_MAIL_D1_NAME")
+            [ -z "$TEMP_MAIL_DOMAINS_JSON" ] && missing+=("TEMP_MAIL_DOMAINS_JSON")
+            [ -z "$TEMP_MAIL_JWT_SECRET" ] && missing+=("TEMP_MAIL_JWT_SECRET")
+            [ -z "$TEMP_MAIL_ADMIN_PASSWORDS_JSON" ] && missing+=("TEMP_MAIL_ADMIN_PASSWORDS_JSON")
+            if [ ${#missing[@]} -gt 0 ]; then
+              printf 'Missing required generated-config inputs:\n - %s\n' "${missing[@]}"
+              exit 1
+            fi
+          fi
+
+          export use_worker_assets="$USE_WORKER_ASSETS"
+          export use_worker_assets_with_telegram="$USE_WORKER_ASSETS_WITH_TELEGRAM"
+
+          if [ -n "$use_worker_assets" ]; then
+            cd frontend/
+            pnpm install --no-frozen-lockfile
+            if [ -n "$use_worker_assets_with_telegram" ]; then
+              echo "Building with telegram pages"
+              pnpm build:telegram:pages
+            else
+              echo "Building with normal pages"
+              pnpm build:pages
+            fi
+            cd ..
+          fi
+
+          export debug_mode=${{ secrets.DEBUG_MODE }}
+          export use_mail_wasm_parser=${{ secrets.BACKEND_USE_MAIL_WASM_PARSER }}
+
+          if [ -n "$WRANGLER_TOML_CONTENT" ]; then
+            echo "Using BACKEND_TOML secret for worker/wrangler.toml"
+            printf '%s\n' "$WRANGLER_TOML_CONTENT" > worker/wrangler.toml
+          else
+            echo "BACKEND_TOML secret is not set, rendering worker/wrangler.toml from repository variables"
+            D1_NAME="$TEMP_MAIL_D1_NAME"
+            D1_WAS_CREATED=false
+            echo "Resolving D1 database: $D1_NAME"
+            D1_LIST="$(curl -fsS \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database?per_page=100")"
+            D1_DATABASE_ID="$(printf '%s' "$D1_LIST" | jq -r --arg NAME "$D1_NAME" '.result[]? | select(.name == $NAME) | .uuid' | head -n 1)"
+            if [ -z "$D1_DATABASE_ID" ] || [ "$D1_DATABASE_ID" = "null" ]; then
+              echo "No D1 database named '$D1_NAME' was found. Creating that exact name."
+              D1_CREATE="$(curl -fsS -X POST \
+                -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                -H "Content-Type: application/json" \
+                --data "$(jq -cn --arg name "$D1_NAME" '{name: $name}')" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database")"
+              D1_DATABASE_ID="$(printf '%s' "$D1_CREATE" | jq -r '.result.uuid // empty')"
+              if [ -z "$D1_DATABASE_ID" ]; then
+                echo "Cloudflare did not return an ID for the newly created D1 database."
+                exit 1
+              fi
+              D1_WAS_CREATED=true
+            fi
+            export D1_DATABASE_ID D1_WAS_CREATED
+            export D1_DATABASE_NAME="$D1_NAME"
+            python .github/scripts/render-worker-toml.py > worker/wrangler.toml
+          fi
+
+          cd worker/
+          echo "Generated wrangler.toml; sensitive contents are not printed."
+
+          pnpm install --frozen-lockfile
+
+          if [ "${D1_WAS_CREATED:-false}" = "true" ]; then
+            echo "Initializing the newly created D1 database with db/schema.sql"
+            pnpm exec wrangler d1 execute "$D1_DATABASE_NAME" --file=../db/schema.sql --remote
+          fi
+
+          if [ -n "$use_mail_wasm_parser" ]; then
+            echo "Using mail-parser-wasm-worker"
+            pnpm add mail-parser-wasm-worker
+            git apply ../.github/config/mail-parser-wasm-worker.patch
+            echo "Applied mail-parser-wasm-worker patch"
+          fi
+
+          pnpm run lint
+          pnpm run test
+          pnpm run build
+
+          secret_payload="$(mktemp)"
+          trap 'rm -f "$secret_payload"' EXIT
+          python - <<'PY' > "$secret_payload"
+          import json
+          import os
+          import sys
+
+          secrets = {}
+
+          direct_mappings = {
+              "TEMP_MAIL_JWT_SECRET": "JWT_SECRET",
+              "TEMP_MAIL_ADMIN_PASSWORDS_JSON": "ADMIN_PASSWORDS",
+              "TEMP_MAIL_PASSWORDS_JSON": "PASSWORDS",
+              "TEMP_MAIL_RESEND_TOKEN": "RESEND_TOKEN",
+              "TEMP_MAIL_SMTP_CONFIG": "SMTP_CONFIG",
+          }
+          for env_name, worker_secret_name in direct_mappings.items():
+              value = os.environ.get(env_name, "").strip()
+              if value:
+                  secrets[worker_secret_name] = value
+
+          extra_json = os.environ.get("TEMP_MAIL_WORKER_SECRETS_JSON", "").strip()
+          if extra_json:
+              try:
+                  extra = json.loads(extra_json)
+              except Exception as exc:  # noqa: BLE001
+                  print(f"TEMP_MAIL_WORKER_SECRETS_JSON 解析失败: {exc}", file=sys.stderr)
+                  raise SystemExit(2) from exc
+              if not isinstance(extra, dict):
+                  print("TEMP_MAIL_WORKER_SECRETS_JSON 必须是 JSON 对象", file=sys.stderr)
+                  raise SystemExit(2)
+              for key, value in extra.items():
+                  if isinstance(key, str) and key and isinstance(value, str) and value:
+                      secrets[key] = value
+
+          print(json.dumps(secrets))
+          PY
+          deploy_args=(--minify)
+          if [ "$(jq 'length' "$secret_payload")" -gt 0 ]; then
+            echo "Worker Secrets will be uploaded atomically with this deployment."
+            deploy_args+=(--secrets-file "$secret_payload")
+          fi
+
+          if [ "$debug_mode" = "true" ]; then
+            pnpm exec wrangler deploy "${deploy_args[@]}"
+          else
+            if pnpm exec wrangler deploy "${deploy_args[@]}" >/dev/null 2>&1; then
+              echo "Deploy succeeded"
+            else
+              code=$?
+              echo "Command failed with exit code $code"
+              exit "$code"
+            fi
+          fi
+
+          echo "Deployed commit ${{ github.sha }}"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WRANGLER_TOML_CONTENT: ${{ secrets.BACKEND_TOML }}
+          USE_WORKER_ASSETS: ${{ secrets.USE_WORKER_ASSETS || vars.USE_WORKER_ASSETS }}
+          USE_WORKER_ASSETS_WITH_TELEGRAM: ${{ secrets.USE_WORKER_ASSETS_WITH_TELEGRAM || vars.USE_WORKER_ASSETS_WITH_TELEGRAM }}
+          TEMP_MAIL_WORKER_NAME: ${{ vars.TEMP_MAIL_WORKER_NAME }}
+          TEMP_MAIL_WORKER_ROUTE: ${{ vars.TEMP_MAIL_WORKER_ROUTE }}
+          TEMP_MAIL_D1_NAME: ${{ vars.TEMP_MAIL_D1_NAME }}
+          TEMP_MAIL_DOMAINS_JSON: ${{ vars.TEMP_MAIL_DOMAINS_JSON }}
+          TEMP_MAIL_DEFAULT_DOMAINS_JSON: ${{ vars.TEMP_MAIL_DEFAULT_DOMAINS_JSON }}
+          TEMP_MAIL_RANDOM_SUBDOMAIN_DOMAINS_JSON: ${{ vars.TEMP_MAIL_RANDOM_SUBDOMAIN_DOMAINS_JSON }}
+          TEMP_MAIL_DOMAIN_LABELS_JSON: ${{ vars.TEMP_MAIL_DOMAIN_LABELS_JSON }}
+          TEMP_MAIL_USER_ROLES_JSON: ${{ vars.TEMP_MAIL_USER_ROLES_JSON }}
+          TEMP_MAIL_PREFIX: ${{ vars.TEMP_MAIL_PREFIX }}
+          TEMP_MAIL_RANDOM_SUBDOMAIN_LENGTH: ${{ vars.TEMP_MAIL_RANDOM_SUBDOMAIN_LENGTH }}
+          TEMP_MAIL_ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH: ${{ vars.TEMP_MAIL_ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH }}
+          TEMP_MAIL_ENABLE_USER_CREATE_EMAIL: ${{ vars.TEMP_MAIL_ENABLE_USER_CREATE_EMAIL }}
+          TEMP_MAIL_ENABLE_USER_DELETE_EMAIL: ${{ vars.TEMP_MAIL_ENABLE_USER_DELETE_EMAIL }}
+          TEMP_MAIL_ENABLE_ADDRESS_PASSWORD: ${{ vars.TEMP_MAIL_ENABLE_ADDRESS_PASSWORD }}
+          TEMP_MAIL_DISABLE_SHOW_GITHUB: ${{ vars.TEMP_MAIL_DISABLE_SHOW_GITHUB }}
+          TEMP_MAIL_USER_DEFAULT_ROLE: ${{ vars.TEMP_MAIL_USER_DEFAULT_ROLE }}
+          TEMP_MAIL_NO_LIMIT_SEND_ROLE: ${{ vars.TEMP_MAIL_NO_LIMIT_SEND_ROLE }}
+          TEMP_MAIL_ENABLE_SEND_MAIL_BINDING: ${{ vars.TEMP_MAIL_ENABLE_SEND_MAIL_BINDING }}
+          TEMP_MAIL_SEND_MAIL_REMOTE: ${{ vars.TEMP_MAIL_SEND_MAIL_REMOTE }}
+          TEMP_MAIL_SEND_MAIL_DOMAINS_JSON: ${{ vars.TEMP_MAIL_SEND_MAIL_DOMAINS_JSON }}
+          TEMP_MAIL_FRONTEND_URL: ${{ vars.TEMP_MAIL_FRONTEND_URL }}
+          TEMP_MAIL_VERIFICATION_MAIL_BRAND_NAME: ${{ vars.TEMP_MAIL_VERIFICATION_MAIL_BRAND_NAME }}
+          TEMP_MAIL_VERIFICATION_MAIL_LOGO_URL: ${{ vars.TEMP_MAIL_VERIFICATION_MAIL_LOGO_URL }}
+          TEMP_MAIL_CRON: ${{ vars.TEMP_MAIL_CRON }}
+          TEMP_MAIL_KV_ID: ${{ secrets.TEMP_MAIL_KV_ID }}
+          TEMP_MAIL_JWT_SECRET: ${{ secrets.TEMP_MAIL_JWT_SECRET }}
+          TEMP_MAIL_ADMIN_PASSWORDS_JSON: ${{ secrets.TEMP_MAIL_ADMIN_PASSWORDS_JSON }}
+          TEMP_MAIL_PASSWORDS_JSON: ${{ secrets.TEMP_MAIL_PASSWORDS_JSON }}
+          TEMP_MAIL_RESEND_TOKEN: ${{ secrets.TEMP_MAIL_RESEND_TOKEN }}
+          TEMP_MAIL_SMTP_CONFIG: ${{ secrets.TEMP_MAIL_SMTP_CONFIG }}
+          TEMP_MAIL_WORKER_SECRETS_JSON: ${{ secrets.TEMP_MAIL_WORKER_SECRETS_JSON }}

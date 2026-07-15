@@ -125,7 +125,11 @@ export default {
             return c.text(msgs.CodeAlreadySentMsg, 400);
         }
 
-        const verificationMail = buildVerificationMail(code);
+        const verificationMail = buildVerificationMail(code, {
+            brandName: getStringValue(c.env.VERIFICATION_MAIL_BRAND_NAME)
+                || getStringValue(c.env.TITLE),
+            logoUrl: getStringValue(c.env.VERIFICATION_MAIL_LOGO_URL),
+        });
         try {
             await sendMail(c, settings.verifyMailSender, {
                 from_name: verificationMail.fromName,

@@ -146,6 +146,8 @@
 | -------------------------- | ----------- | ------------------------------------------------ | --------------------- |
 | `DEFAULT_LANG`             | 文本        | Worker 错误信息默认语言, zh/en                   | `zh`                  |
 | `TITLE`                    | 文本        | 自定义前端页面网站标题，支持 html                | `Custom Title`        |
+| `VERIFICATION_MAIL_BRAND_NAME` | 文本   | 注册验证码邮件品牌名；未配置时回退为通用文本标识 | `Example Mail`        |
+| `VERIFICATION_MAIL_LOGO_URL` | 文本      | 可选的注册邮件 Logo，必须是公开 HTTPS 图片；无效时回退为文本 | `https://assets.example.com/mail-logo.png` |
 | `ANNOUNCEMENT`             | 文本        | 自定义前端页面公告，支持 html                    | `Custom Announcement` |
 | `ALWAYS_SHOW_ANNOUNCEMENT` | 文本/JSON   | 是否总是显示公告(即使无更改), 默认 `false`       | `true`                |
 | `COPYRIGHT`                | 文本        | 自定义前端界面页脚文本，支持 html                | `Dream Hunter`        |

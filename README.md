@@ -1,202 +1,151 @@
-<!-- markdownlint-disable-file MD033 MD045 -->
-# Cloudflare 临时邮箱 - 免费搭建临时邮件服务
+<!-- markdownlint-disable-file MD033 -->
+# Cloudflare Temp Email · Loven7 Fork
 
-<p align="center">
-  <a href="https://temp-mail-docs.awsl.uk" target="_blank">
-    <img alt="docs" src="https://img.shields.io/badge/docs-grey?logo=vitepress">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest" target="_blank">
-    <img src="https://img.shields.io/github/v/release/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/LICENSE" target="_blank">
-    <img alt="MIT License" src="https://img.shields.io/github/license/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/graphs/contributors" target="_blank">
-   <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="">
-    <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="">
-    <img src="https://img.shields.io/github/last-commit/dreamhunter2333/cloudflare_temp_email">
-  </a>
-</p>
+> 这是 **Loven7 维护的 Fork**：在上游稳定版本之上补充生产安全、并发一致性、账号体系与可维护部署能力。公开仓库只保存通用源码和示例配置，不保存任何维护者的域名、Cloudflare 资源 ID、密码、Token 或私有部署文件。
 
-<p align="center">
-  <a href="https://hellogithub.com/repository/2ccc64bb1ba346b480625f584aa19eb1" target="_blank">
-    <img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=2ccc64bb1ba346b480625f584aa19eb1&claim_uid=FxNypXK7UQ9OECT" alt="Featured｜HelloGitHub" height="30"/>
-  </a>
-</p>
+[English](README_EN.md) · [安全策略](SECURITY.md) · [贡献指南](CONTRIBUTING.md) · [更新日志](CHANGELOG.md) · [Release](https://github.com/Lur1N77777/cloudflare_temp_email/releases)
 
-<p align="center">
-  <a href="README.md">中文文档</a> |
-  <a href="README_EN.md">English Document</a>
-</p>
+## 项目关系
 
-> 本项目仅供学习和个人用途，请勿将其用于任何违法行为，否则后果自负。
+| 项目 | 定位 | 维护与兼容边界 |
+| --- | --- | --- |
+| [上游项目](https://github.com/dreamhunter2333/cloudflare_temp_email) | Cloudflare 临时邮箱的原始实现 | 上游功能与通用修复会通过 PR 审核后同步；本 Fork 不承诺未审查的上游提交可直接上线 |
+| 本仓库 | Worker、D1、邮件路由与上游 Vue 前端 | Loven7 维护的公共核心；适合独立部署，也为管理套件提供兼容 API |
+| [Loven7 Mail Cloudflare 管理套件](https://github.com/Lur1N77777/loven7-mail-cloudflare-suite) | 可选的增强管理后台与 Webmail | 独立发布、独立配置；不是运行本仓库的必需组件 |
 
-**一个功能完整的临时邮箱服务！**
+本 Fork 重点维护：认证与令牌撤销、并发验证码、收发信幂等、额度原子预占、入站去重、游标分页、邮件 flags、安全日志和自动化发布。上游独有界面问题应优先向上游反馈；Fork 差异、部署脚本与安全问题由本仓库处理，详见 [支持边界](docs/fork-release-policy.md)。
 
-- **完全免费** - 基于 Cloudflare 免费服务构建，零成本运行
-- **高性能** - Rust WASM 邮件解析，响应速度极快
-- **现代化界面** - 响应式设计，支持多语言，操作简便
-- **地址密码** - 支持为邮箱地址设置独立密码，增强安全性
-- **Agent 友好** - 内置邮箱 [`skill`](skills/cf-temp-mail-agent-mail/SKILL.md)，方便 AI agent 使用邮箱
-- **移动端管理** - 社区客户端 [CloudMail](https://github.com/Lur1N77777/CloudMail)，支持 Android 管理后台和邮箱管理
+## 主要能力
 
-## 部署文档 - 快速开始
+- Cloudflare Workers + D1 + Email Routing，无常驻服务器。
+- Vue 3 响应式前端、管理后台、用户注册登录、邮箱地址密码。
+- 收件、发件、附件、转发、Webhook、Telegram、SMTP/IMAP 代理。
+- PBKDF2 密码保护、登录限流、JWT 类型与版本校验。
+- 验证码、发信额度和幂等请求的 D1 并发保护。
+- 可选 R2/S3、Workers AI、Turnstile、Resend 与 `send_email` binding。
 
-[部署文档](https://temp-mail-docs.awsl.uk) | [Github Action 部署文档](https://temp-mail-docs.awsl.uk/zh/guide/actions/github-action.html)
+## 选择部署方式
 
-<a href="https://temp-mail-docs.awsl.uk/zh/guide/actions/github-action.html">
-  <img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare Workers" height="32">
-</a>
+- **第一次部署（推荐）**：使用 [GitHub Actions 部署向导](docs/github-actions-auto-deploy.md)，配置一次 Secrets/Variables 后手动触发。
+- **希望完全掌控配置**：按下方“手动部署”执行。
+- **要使用增强管理后台**：先部署本仓库 Worker，再部署独立的 [管理套件](https://github.com/Lur1N77777/loven7-mail-cloudflare-suite)。
 
-## 更新日志
+## 手动部署
 
-查看 [CHANGELOG](CHANGELOG.md) 了解最新更新内容。
+### 1. 准备
 
-## 在线体验
+需要 Node.js 24、pnpm 10、一个已接入 Cloudflare 的域名，以及开启 Email Routing 的 Cloudflare 账户。安装并登录 Wrangler：
 
-立即体验 → [https://mail.awsl.uk/](https://mail.awsl.uk/)
-
-<details>
-<summary>服务状态监控（点击收缩/展开）</summary>
-
-|                                            |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Backend](https://temp-email-api.awsl.uk/) | [![Deploy Backend Production](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/backend_deploy.yaml/badge.svg)](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/backend_deploy.yaml) ![](https://uptime.aks.awsl.icu/api/badge/10/status) ![](https://uptime.aks.awsl.icu/api/badge/10/uptime) ![](https://uptime.aks.awsl.icu/api/badge/10/ping) ![](https://uptime.aks.awsl.icu/api/badge/10/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/10/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/10/response) |
-| [Frontend](https://mail.awsl.uk/)          | [![Deploy Frontend](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/frontend_deploy.yaml/badge.svg)](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/frontend_deploy.yaml) ![](https://uptime.aks.awsl.icu/api/badge/12/status) ![](https://uptime.aks.awsl.icu/api/badge/12/uptime) ![](https://uptime.aks.awsl.icu/api/badge/12/ping) ![](https://uptime.aks.awsl.icu/api/badge/12/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/12/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/12/response)         |
-
-</details>
-
-<details>
-<summary>Star History（点击收缩/展开）</summary>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date&theme=dark" />
-  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date" />
-  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date" />
-</picture>
-
-</details>
-
-<details open>
-<summary>目录（点击收缩/展开）</summary>
-
-- [Cloudflare 临时邮箱 - 免费搭建临时邮件服务](#cloudflare-临时邮箱---免费搭建临时邮件服务)
-  - [部署文档 - 快速开始](#部署文档---快速开始)
-  - [更新日志](#更新日志)
-  - [在线体验](#在线体验)
-  - [核心功能](#核心功能)
-    - [邮件处理](#邮件处理)
-    - [用户管理](#用户管理)
-    - [管理功能](#管理功能)
-    - [多语言与界面](#多语言与界面)
-    - [集成与扩展](#集成与扩展)
-  - [技术架构](#技术架构)
-    - [系统架构](#系统架构)
-    - [技术栈](#技术栈)
-    - [主要组件](#主要组件)
-  - [加入社区](#加入社区)
-
-</details>
-
-## 核心功能
-
-<details open>
-<summary>核心功能详情（点击收缩/展开）</summary>
-
-### 邮件处理
-
-- [x] 使用 `rust wasm` 解析邮件，解析速度快，几乎所有邮件都能解析，node 的解析模块解析邮件失败的邮件，rust wasm 也能解析成功
-- [x] **AI 邮件识别** - 使用 Cloudflare Workers AI 自动提取邮件中的验证码、认证链接、服务链接等重要信息
-- [x] 支持为指定基础域名创建随机二级域名邮箱地址，更适合收件隔离场景
-- [x] 支持发送邮件，支持 `DKIM` 验证
-- [x] 支持 `SMTP` 和 `Resend` 等多种发送方式 
-- [x] 增加查看 `附件` 功能，支持附件图片显示
-- [x] 支持 S3 附件存储和删除功能
-- [x] 垃圾邮件检测和黑白名单配置
-- [x] 邮件转发功能，支持全局转发地址
-
-### 用户管理
-
-- [x] 使用 `凭证` 重新登录之前的邮箱
-- [x] 添加完整的用户注册登录功能，可绑定邮箱地址，绑定后可自动获取邮箱JWT凭证切换不同邮箱
-- [x] 支持 `OAuth2` 第三方登录（Github、Authentik 等）
-- [x] 支持 `Passkey` 无密码登录
-- [x] 用户角色管理，支持多角色域名和前缀配置
-- [x] 用户收件箱查看，支持地址和关键词过滤
-
-### 管理功能
-
-- [x] 完整的 admin 控制台
-- [x] `admin` 后台创建无前缀邮箱
-- [x] admin 用户管理页面，增加用户地址查看功能
-- [x] 定时清理功能，支持多种清理策略
-- [x] 获取自定义名字的邮箱，`admin` 可配置黑名单
-- [x] 增加访问密码，可作为私人站点
-
-### 多语言与界面
-
-- [x] 前后台均支持多语言
-- [x] 现代化 UI 设计，支持响应式布局
-- [x] 支持 Google Ads 集成
-- [x] 使用 shadow DOM 防止样式污染
-- [x] 支持 URL JWT 参数自动登录
-
-### 集成与扩展
-
-- [x] 完整的 `Telegram Bot` 支持，以及 `Telegram` 推送，Telegram Bot 小程序
-- [x] 添加 `SMTP proxy server`，支持 `SMTP` 发送邮件，`IMAP` 查看邮件
-- [x] Webhook 支持，消息推送集成
-- [x] 支持 `CF Turnstile` 人机验证
-- [x] 限流配置，防止滥用
-- [x] **Agent 友好**：内置 [`cf-temp-mail-agent-mail`](skills/cf-temp-mail-agent-mail/SKILL.md) skill，AI agent 可直接消费邮箱，详见 [文档](vitepress-docs/docs/zh/guide/feature/agent-email.md)
-- [x] 社区移动端管理客户端：[CloudMail](https://github.com/Lur1N77777/CloudMail) 基于 Expo / React Native，面向本项目兼容 API，提供 Android 管理员后台、地址管理、收件/发件/未知邮件、验证码快捷复制、OLED 黑主题和本地分组。
-
-</details>
-
-## 技术架构
-
-<details>
-<summary>技术架构详情（点击收缩/展开）</summary>
-
-### 系统架构
-
-- **数据库**: Cloudflare D1 作为主数据库
-- **前端部署**: 使用 Cloudflare Pages 部署前端
-- **后端部署**: 使用 Cloudflare Workers 部署后端
-- **邮件转发**: 使用 Cloudflare Email Routing
-
-### 技术栈
-
-- **前端**: Vue 3 + Vite + TypeScript
-- **后端**: TypeScript + Cloudflare Workers
-- **邮件解析**: Rust WASM (mail-parser-wasm)
-- **数据库**: Cloudflare D1 (SQLite)
-- **存储**: Cloudflare KV + R2 (可选 S3)
-- **代理服务**: Python SMTP/IMAP Proxy Server
-
-### 主要组件
-
-- **Worker**: 核心后端服务
-- **Frontend**: Vue 3 用户界面
-- **Mail Parser WASM**: Rust 邮件解析模块
-- **SMTP Proxy Server**: Python 邮件代理服务
-- **Pages Functions**: Cloudflare Pages 中间件
-- **Documentation**: VitePress 文档站点
-
-</details>
-
-### 提醒
-
-- 在Resend添加域名记录时，如果您域名解析服务商正在托管您的3级域名a.b.com，请删除Resend生成的默认name中二级域名前缀b，否则将会添加a.b.b.com，导致验证失败。添加记录后，可通过
 ```bash
-nslookup -qt="mx" a.b.com 1.1.1.1
+corepack enable
+pnpm dlx wrangler login
+git clone https://github.com/Lur1N77777/cloudflare_temp_email.git
+cd cloudflare_temp_email
 ```
-进行验证。 
 
-## 加入社区
+### 2. 创建并初始化 D1
 
-- [Telegram](https://t.me/cloudflare_temp_email)
+```bash
+cd worker
+pnpm install --frozen-lockfile
+pnpm exec wrangler d1 create temp-email-db
+pnpm exec wrangler d1 execute temp-email-db --file=../db/schema.sql --remote
+```
+
+复制 `worker/wrangler.toml.template` 为 `worker/wrangler.toml`，只需先修改四项：
+
+1. `name`：Worker 名称。
+2. `DOMAINS` 与 `DEFAULT_DOMAINS`：你的收件域名，例如 `mail.example.com`。
+3. `database_name`：上一步的 D1 名称。
+4. `database_id`：上一步命令返回的 D1 ID。
+
+`wrangler.toml` 已被 Git 忽略，不要取消忽略或提交它。
+
+### 3. 安全写入密钥并部署 Worker
+
+下面命令会交互式读取值，不会把值写进仓库。`ADMIN_PASSWORDS` 必须是 JSON 数组；请使用随机长密码。
+
+```bash
+pnpm exec wrangler secret put JWT_SECRET
+pnpm exec wrangler secret put ADMIN_PASSWORDS
+pnpm run lint
+pnpm test
+pnpm run deploy
+```
+
+把 Cloudflare Email Routing 的 Catch-all 规则指向刚部署的 Worker。然后访问 Worker 根地址，确认返回成功响应。
+
+### 4. 部署自带前端（可选）
+
+```bash
+cd ../frontend
+pnpm install --frozen-lockfile
+cp .env.example .env.prod
+# 编辑 .env.prod：VITE_API_BASE=https://api.example.com
+pnpm run build
+pnpm exec wrangler pages deploy dist --project-name temp-email-web
+```
+
+Windows PowerShell 可用 `Copy-Item .env.example .env.prod` 替代 `cp`。部署后至少验收：公开设置接口、创建地址、收件、管理员登录；启用用户功能时再验收注册验证码和登录。
+
+更多变量、现有数据库升级和故障排查见 [VitePress 快速开始](vitepress-docs/docs/zh/guide/quick-start.md)。
+
+## 验证码邮件品牌
+
+公开版不依赖任何外部 Logo，默认显示文本标识，因此不会出现图片加载失败。需要自定义时设置普通 Worker Variables：
+
+```toml
+VERIFICATION_MAIL_BRAND_NAME = "Example Mail"
+VERIFICATION_MAIL_LOGO_URL = "https://assets.example.com/mail-logo.png"
+```
+
+Logo 必须是公开可访问的 HTTPS 图片；不合法或缺失时自动回退为文本标识。不要把需要鉴权的图片 URL、签名 URL 或私有域名写入公开仓库。
+
+## 给 AI Agent 的部署提示词
+
+把下面整段复制给执行部署的 AI Agent，并在最后单独提供你的非敏感部署选择。密码、Token 应由你在 Cloudflare/GitHub 界面填写，或通过交互式命令输入，不要发给 Agent：
+
+```text
+你是 Cloudflare 部署执行 Agent。目标是把本仓库部署为一个新的、与维护者生产环境完全隔离的实例。
+
+强制规则：
+1. 先完整阅读 README.md、docs/github-actions-auto-deploy.md、SECURITY.md 和 worker/wrangler.toml.template；不得凭经验猜变量名。
+2. 先做只读检查：git status、Node/pnpm/Wrangler 版本、Cloudflare 当前账户、待使用的 D1/Pages/Worker 名称。发现同名生产资源时停止并询问，禁止覆盖。
+3. 永远不要输出、回显、写入文件或提交 JWT_SECRET、管理员密码、API Token、Cloudflare 资源凭据。密钥只允许由用户在网页 Secret 表单填写，或使用 wrangler secret put 交互输入。
+4. 所有示例值（example.com、占位 ID、示例密码）都必须替换；仍存在占位符时禁止部署。
+5. 新建 D1 后只对全新空库执行 db/schema.sql。已有数据库必须先导出备份，再逐个检查并应用缺失迁移；禁止重复执行 ALTER 迁移。
+6. 部署前依次运行 worker 的 frozen install、lint、test、build；任何一步失败都停止，不得跳过或用 --force。
+7. 先部署 Worker 并做公开健康探针，再配置 Email Routing；之后才部署前端。前端 VITE_API_BASE 必须指向本次新 Worker。
+8. 不修改 DNS、Catch-all、GitHub main、Release 或现有 Cloudflare 资源，除非用户明确授权该具体操作。
+9. 验收至少包含：公开设置 200、创建测试地址、接收测试邮件、管理员登录；启用注册时还要验证验证码发送、重复注册拦截和登录。测试数据完成后删除。
+10. 最终只汇报资源名称、公开 URL、测试结果和仍需用户完成的步骤；密钥与完整资源 ID 一律脱敏。
+
+执行顺序：盘点 -> 给出将创建/修改的资源清单 -> 等待用户确认破坏性操作 -> 配置 -> 测试 -> 部署 -> 探针 -> 清理测试数据 -> 汇报。任何信息不足时提出一个最小问题，不得自行选择用户域名或现有生产资源。
+```
+
+建议给 Agent 的输入只包含：Cloudflare 账户显示名称、计划使用的 Worker/D1/Pages 名称、收件域名、是否部署前端、是否启用用户注册。更完整的逐项清单见 [Actions 部署向导](docs/github-actions-auto-deploy.md)。
+
+## 开发与贡献
+
+```bash
+cd worker
+pnpm install --frozen-lockfile
+pnpm run lint
+pnpm test
+pnpm run build
+```
+
+提交 PR 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。公开仓库禁止提交 `.dev.vars`、`wrangler.toml`、数据库导出、私有域名或任何凭据。发现漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，不要创建公开 Issue。
+
+## 发布与上游同步
+
+- 定时任务只创建可审查的上游同步 PR，不会直接覆盖 `main`，也不会自动部署。
+- Fork Release 使用 `v上游版本-loven7.修订号`，例如 `v1.10.0-loven7.1`。
+- 推送版本 Tag 后，工作流构建资产、生成 SHA-256 校验文件，并创建或更新 GitHub Release。
+- 生产实例的私有配置应保存在 Cloudflare/GitHub Secrets 或独立私有配置仓库，不进入此公共 Fork。
+
+完整策略见 [Fork 发布策略](docs/fork-release-policy.md)。
+
+## 许可证与致谢
+
+本项目遵循 [MIT License](LICENSE)。感谢 [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) 及其贡献者；Fork 保留上游版权与提交历史。

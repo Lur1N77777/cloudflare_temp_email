@@ -82,6 +82,9 @@ web_modules/
 .env.test.local
 .env.production.local
 .env.local
+.env.*
+!.env.example
+!.env.pages
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -133,10 +136,46 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-.wrangler
+# Cloudflare/local deployment state. Templates remain tracked.
+.wrangler/
+**/.wrangler/
 wrangler.toml
-.dev.vars
-pnpm-lock.yaml
+**/wrangler.toml
+wrangler.*.toml
+**/wrangler.*.toml
+.dev.vars*
+**/.dev.vars*
+
+# Private deployment overlays and credentials
+.private/
+private/
+config/local/
+deploy/private/
+.envrc
+.direnv/
+credentials*.json
+secrets*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Local databases, exports and backups (repository migrations under db/*.sql stay tracked)
+*.sqlite*
+*.sqlite3
+*.db
+*.dump
+backups/
+backup/
+*.bak
+*.backup
+
+# Infrastructure state can contain credentials and resource identifiers
+*.tfstate
+*.tfstate.*
+.terraform/
 
 # E2E test artifacts
 e2e/test-results/

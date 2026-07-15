@@ -5,7 +5,7 @@ compatibility_flags = [ "nodejs_compat" ]
 keep_vars = true
 # if you want use custom_domain, you need to add routes
 # routes = [
-# 	{ pattern = "temp-email-api.xxxxx.xyz", custom_domain = true },
+# 	{ pattern = "api.example.com", custom_domain = true },
 # ]
 
 # if you want deploy worker with frontend assets, you need to add assets
@@ -39,35 +39,35 @@ PREFIX = "tmp"
 # MAX_ADDRESS_LEN = 30
 # Disable custom email address name, if set true, users cannot input custom email name, will auto generate
 # DISABLE_CUSTOM_ADDRESS_NAME = true
-# IF YOU WANT TO MAKE YOUR SITE PRIVATE, UNCOMMENT THE FOLLOWING LINES
-# PASSWORDS = ["123", "456"]
-# For admin panel
-# ADMIN_PASSWORDS = ["123", "456"]
+# Authentication values are Secrets, never plain [vars]. After copying this template, run:
+# pnpm exec wrangler secret put JWT_SECRET
+# pnpm exec wrangler secret put ADMIN_PASSWORDS
+# Optional private-site password: pnpm exec wrangler secret put PASSWORDS
+# ADMIN_PASSWORDS and PASSWORDS values use JSON string arrays with random passwords.
 # warning: no password or user check for admin portal
 # DISABLE_ADMIN_PASSWORD_CHECK = false
 # ADMIN CONTACT, CAN BE ANY STRING
-# ADMIN_CONTACT = "xx@xx.xxx"
+# ADMIN_CONTACT = "admin@example.com"
 # Create new address with default domain first, if set true, will use first domain from DEFAULT_DOMAINS when no domain specified
 # CREATE_ADDRESS_DEFAULT_DOMAIN_FIRST = false
-DEFAULT_DOMAINS = ["xxx.xxx1" , "xxx.xxx2"] # domain name for no role users
-DOMAINS = ["xxx.xxx1" , "xxx.xxx2"] # all domain names
+DEFAULT_DOMAINS = ["mail.example.com"] # domain name for no role users
+DOMAINS = ["mail.example.com"] # all domain names
 # Allow /api/new_address and /admin/new_address to accept subdomains that end with an allowed base domain
-# e.g. if DOMAINS contains "abc.com", API can accept "team.abc.com" and "dev.team.abc.com"
+# e.g. if DOMAINS contains "example.com", API can accept "team.example.com" and "dev.team.example.com"
 # ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH = true
 # Allow optional random subdomain generation for the listed base domains
-# e.g. name@abc.com => name@r4nd0m.abc.com
-# RANDOM_SUBDOMAIN_DOMAINS = ["abc.com"]
+# e.g. name@example.com => name@r4nd0m.example.com
+# RANDOM_SUBDOMAIN_DOMAINS = ["example.com"]
 # RANDOM_SUBDOMAIN_LENGTH = 8
 # For chinese domain name, you can use DOMAIN_LABELS to show chinese domain name
-# DOMAIN_LABELS = ["中文.xxx", "xxx.xxx2"]
+# DOMAIN_LABELS = ["示例邮箱"]
 # USER_DEFAULT_ROLE = "vip" # default role for new users(only when enable mail verification)
 # ADMIN_USER_ROLE = "admin" # the role which can access admin panel
 # User roles configuration, if domains is empty will use default_domains, if prefix is null will use default prefix, if prefix is empty string will not use prefix
 # USER_ROLES = [
-#    { domains = ["xxx.xxx1" , "xxx.xxx2"], role = "vip", prefix = "vip" },
-#    { domains = ["xxx.xxx1" , "xxx.xxx2"], role = "admin", prefix = "" },
+#    { domains = ["mail.example.com"], role = "vip", prefix = "vip" },
+#    { domains = ["mail.example.com"], role = "admin", prefix = "" },
 # ]
-JWT_SECRET = "xxx"
 BLACK_LIST = ""
 # Allow users to create email addresses
 ENABLE_USER_CREATE_EMAIL = true
@@ -114,20 +114,23 @@ ENABLE_AUTO_REPLY = false
 # enable sending email attachments via Telegram push (50MB per file limit)
 # ENABLE_TG_PUSH_ATTACHMENT = true
 # global forward address list, if set, all emails will be forwarded to these addresses
-# FORWARD_ADDRESS_LIST = ["xxx@xxx.com"]
+# FORWARD_ADDRESS_LIST = ["archive@example.net"]
 # subdomain forward address list, if set, subdomain emails will be forwarded to these addresses
 # SUBDOMAIN_FORWARD_ADDRESS_LIST = """
 # [
-#     {"domains":[""],"forward":"xxx1@xxx.com"},
-#     {"domains":["subdomain-1.domain.com","subdomain-2.domain.com"],"forward":"xxx2@xxx.com"}
+#     {"domains":[""],"forward":"catchall@example.net"},
+#     {"domains":["subdomain-1.mail.example.com","subdomain-2.mail.example.com"],"forward":"archive@example.net"}
 # ]
 # """
 # Frontend URL
-# FRONTEND_URL = "https://xxxx.xxx"
+# FRONTEND_URL = "https://mail.example.com"
+# Registration verification email branding. If LOGO_URL is omitted, a reliable text wordmark is used.
+# VERIFICATION_MAIL_BRAND_NAME = "Example Mail"
+# VERIFICATION_MAIL_LOGO_URL = "https://assets.example.com/mail-logo.png"
 # Enable check junk mail
 # ENABLE_CHECK_JUNK_MAIL = false
 # junk mail check list, if status exists and status is not pass, will be marked as junk mail
-# JUNK_MAIL_CHECK_LIST = = ["spf", "dkim", "dmarc"]
+# JUNK_MAIL_CHECK_LIST = ["spf", "dkim", "dmarc"]
 # junk mail force check pass list, if no status or status is not pass, will be marked as junk mail
 # JUNK_MAIL_FORCE_PASS_LIST = ["spf", "dkim", "dmarc"]
 # remove attachment if size exceed 2MB, mail maybe mising some information due to parsing
@@ -159,8 +162,8 @@ ENABLE_AUTO_REPLY = false
 
 [[d1_databases]]
 binding = "DB"
-database_name = "xxx"
-database_id = "xxx"
+database_name = "temp-email-db"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 # Workers AI binding (required for AI email extraction)
 # [ai]
@@ -169,7 +172,7 @@ database_id = "xxx"
 # kv config for send email verification code
 # [[kv_namespaces]]
 # binding = "KV"
-# id = "xxxx"
+# id = "00000000000000000000000000000000"
 
 # ratelimit config for /api/new_address
 # [[unsafe.bindings]]

@@ -152,6 +152,8 @@
 | -------------------------- | ----------- | ------------------------------------------------------------------------ | --------------------- |
 | `DEFAULT_LANG`             | Text        | Worker error message default language, zh/en                             | `zh`                  |
 | `TITLE`                    | Text        | Custom frontend page website title, supports html                        | `Custom Title`        |
+| `VERIFICATION_MAIL_BRAND_NAME` | Text   | Registration-email brand name; defaults to a generic text identity       | `Example Mail`        |
+| `VERIFICATION_MAIL_LOGO_URL` | Text      | Optional public HTTPS registration-email logo; invalid values fall back to text | `https://assets.example.com/mail-logo.png` |
 | `ANNOUNCEMENT`             | Text        | Custom frontend page announcement, supports html                         | `Custom Announcement` |
 | `ALWAYS_SHOW_ANNOUNCEMENT` | Text/JSON   | Whether to always show announcement (even if unchanged), default `false` | `true`                |
 | `COPYRIGHT`                | Text        | Custom frontend footer text, supports html                               | `Dream Hunter`        |

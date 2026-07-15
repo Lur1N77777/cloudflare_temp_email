@@ -176,6 +176,15 @@ test('public Wrangler template never stores authentication secrets as plain vars
     assert.doesNotMatch(deployWorkflow, /wrangler secret bulk/);
 });
 
+test('fresh-clone dry-run uses a tracked deployment-neutral Wrangler config', () => {
+    const packageJson = JSON.parse(readRepositoryFile('worker/package.json'));
+    const ciConfig = readRepositoryFile('worker/wrangler.ci.toml');
+    assert.match(packageJson.scripts.build, /--config wrangler\.ci\.toml/);
+    assert.match(ciConfig, /main\s*=\s*"src\/worker\.ts"/);
+    assert.match(ciConfig, /nodejs_compat/);
+    assert.doesNotMatch(ciConfig, /(?:database_id|namespace_id|JWT_SECRET|ADMIN_PASSWORDS|PASSWORDS)\s*=/);
+});
+
 test('public deployment workflows require an explicit manual target', () => {
     for (const path of [
         '.github/workflows/backend_deploy.yaml',

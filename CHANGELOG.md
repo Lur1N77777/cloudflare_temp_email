@@ -39,6 +39,7 @@
 - docs: |公共 Fork| 重写中英文 README 与部署向导，明确上游、Worker 核心和可选管理套件的关系，增加安全策略、贡献指南、PR 模板、Fork 发布策略和可复制的 AI Agent 部署约束
 - fix: |发布| 上游同步改为创建可审查 PR，不再自动部署；Tag 工作流现在会创建 GitHub Release、上传通用构建产物并附带 SHA-256 校验文件
 - fix: |部署安全| Worker 与前端部署工作流改为仅手动触发并强制显式资源名；新建 D1 只初始化刚创建的空库，JWT、管理员/站点密码及 Provider Token 通过 `--secrets-file` 与 Worker 代码原子部署，不再出现先上线无 Secret 版本或把站点密码写入普通变量的窗口
+- fix: |构建| 增加不含资源 ID 或 Secret 的 `worker/wrangler.ci.toml`，让全新克隆无需本机 `wrangler.toml` 也能执行 dry-run build
 
 ## v1.9.0
 

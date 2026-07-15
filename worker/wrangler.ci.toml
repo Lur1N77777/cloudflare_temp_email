@@ -1,0 +1,7 @@
+name = "cloudflare-temp-email-ci"
+main = "src/worker.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Build-only configuration. Runtime variables, resource bindings and Secrets
+# are intentionally absent so `pnpm run build` works in a clean public clone.

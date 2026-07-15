@@ -143,6 +143,7 @@ wrangler.toml
 **/wrangler.toml
 wrangler.*.toml
 **/wrangler.*.toml
+!worker/wrangler.ci.toml
 .dev.vars*
 **/.dev.vars*
 

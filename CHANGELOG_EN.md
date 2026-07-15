@@ -39,6 +39,7 @@
 - docs: |Public Fork| Rewrite the Chinese and English READMEs and deployment guide to clarify the upstream, Worker core, and optional management-suite relationship; add a security policy, contribution guide, PR template, Fork release policy, and a copy-ready AI Agent deployment contract
 - fix: |Release| Make upstream sync open a reviewable PR instead of deploying automatically; tag builds now create a GitHub Release, upload generic artifacts, and include SHA-256 checksums
 - fix: |Deployment security| Make Worker and frontend deployment workflows manual-only with explicit resource names; initialize only newly created empty D1 databases, and deploy JWT, admin/site passwords, and provider tokens atomically with Worker code through `--secrets-file` instead of briefly publishing a secretless version or storing site passwords as plain variables
+- fix: |Build| Add a deployment-neutral `worker/wrangler.ci.toml` without resource IDs or secrets so a fresh clone can run the dry-run build without a local `wrangler.toml`
 
 ## v1.9.0
 

@@ -1,4 +1,4 @@
-name: Deploy Docs
+name: Build Docs
 
 on:
   workflow_run:
@@ -7,15 +7,16 @@ on:
       - completed
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
        startsWith(github.event.workflow_run.head_branch, 'v'))
-    permissions:
-      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -35,22 +36,34 @@ jobs:
           version: 10
           run_install: false
 
-      - name: Deploy Docs
+      - name: Build verified docs
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
+          set -euo pipefail
           cd vitepress-docs/
-          wget https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/frontend.zip -O docs/public/ui_install/frontend.zip
-          pnpm install --no-frozen-lockfile
-          if TAG_NAME=$(gh release view --json tagName --jq '.tagName' 2>/dev/null); then
+          if [ -n "${WORKFLOW_RUN_HEAD_BRANCH:-}" ]; then
+            TAG_NAME="$WORKFLOW_RUN_HEAD_BRANCH"
+          elif TAG_NAME=$(gh release view --json tagName --jq '.tagName' 2>/dev/null); then
             echo "Using release tag $TAG_NAME"
           else
-            TAG_NAME="${WORKFLOW_RUN_HEAD_BRANCH:-${GITHUB_REF_NAME:-main}}"
-            echo "No GitHub release found for this repo; fallback TAG_NAME=$TAG_NAME"
+            echo "A published release is required to build the documentation artifact."
+            exit 1
           fi
-          echo "Deploying docs for tag $TAG_NAME"
-          export TAG_NAME
-          pnpm run deploy
+          mkdir -p .release-assets
+          gh release download "$TAG_NAME" +            --pattern frontend.zip +            --pattern SHA256SUMS.txt +            --dir .release-assets
+          (
+            cd .release-assets
+            grep -E '^[0-9a-fA-F]{64}[[:space:]]+frontend\.zip$' SHA256SUMS.txt +              | sha256sum --check --strict -
+          )
+          cp .release-assets/frontend.zip docs/public/ui_install/frontend.zip
+          pnpm install --frozen-lockfile
+          TAG_NAME="$TAG_NAME" pnpm run build
+
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-${{ github.event.workflow_run.head_branch || github.ref_name }}
+          path: vitepress-docs/docs/.vitepress/dist
+          retention-days: 14

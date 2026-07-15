@@ -148,6 +148,17 @@ test('upstream sync opens a reviewable PR and tag builds create a GitHub Release
     assert.doesNotMatch(syncWorkflow, /push[^\n]*origin[^\n]*main/);
 });
 
+test('release docs build verifies local release assets without production credentials', () => {
+    const docsWorkflow = readRepositoryFile('.github/workflows/docs_deploy.yml');
+    assert.doesNotMatch(docsWorkflow, /CLOUDFLARE_(?:ACCOUNT_ID|API_TOKEN)/);
+    assert.doesNotMatch(docsWorkflow, /pnpm run deploy/);
+    assert.doesNotMatch(docsWorkflow, /dreamhunter2333\/cloudflare_temp_email\/releases\/latest/);
+    assert.match(docsWorkflow, /gh release download/);
+    assert.match(docsWorkflow, /sha256sum --check/);
+    assert.match(docsWorkflow, /pnpm run build/);
+    assert.match(docsWorkflow, /actions\/upload-artifact/);
+});
+
 test('gitignore excludes common local secrets and private deployment overlays', () => {
     const gitignore = readRepositoryFile('.gitignore');
     for (const pattern of [

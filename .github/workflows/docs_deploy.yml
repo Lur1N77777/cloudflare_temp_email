@@ -52,10 +52,10 @@ jobs:
             exit 1
           fi
           mkdir -p .release-assets
-          gh release download "$TAG_NAME" +            --pattern frontend.zip +            --pattern SHA256SUMS.txt +            --dir .release-assets
+          gh release download "$TAG_NAME" --pattern frontend.zip --pattern SHA256SUMS.txt --dir .release-assets
           (
             cd .release-assets
-            grep -E '^[0-9a-fA-F]{64}[[:space:]]+frontend\.zip$' SHA256SUMS.txt +              | sha256sum --check --strict -
+            grep -E '^[0-9a-fA-F]{64}[[:space:]]+frontend\.zip$' SHA256SUMS.txt | sha256sum --check --strict -
           )
           cp .release-assets/frontend.zip docs/public/ui_install/frontend.zip
           pnpm install --frozen-lockfile

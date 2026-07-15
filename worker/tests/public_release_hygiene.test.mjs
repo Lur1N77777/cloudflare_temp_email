@@ -157,6 +157,9 @@ test('release docs build verifies local release assets without production creden
     assert.match(docsWorkflow, /sha256sum --check/);
     assert.match(docsWorkflow, /pnpm run build/);
     assert.match(docsWorkflow, /actions\/upload-artifact/);
+    for (const line of docsWorkflow.split(/\r?\n/)) {
+        assert.doesNotMatch(line, /\s\+\s+(?:--|\|)/, `invalid shell continuation: ${line.trim()}`);
+    }
 });
 
 test('gitignore excludes common local secrets and private deployment overlays', () => {

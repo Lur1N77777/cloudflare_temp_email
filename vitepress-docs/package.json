@@ -4,9 +4,9 @@
   "version": "1.10.0",
   "type": "module",
   "devDependencies": {
-    "@types/node": "^26.0.0",
+    "@types/node": "^26.6.4",
     "vitepress": "^1.6.4",
-    "wrangler": "^4.104.0"
+    "wrangler": "^4.147.0"
   },
   "scripts": {
     "dev": "vitepress dev docs",
@@ -15,7 +15,7 @@
     "deploy": "npm run build && wrangler pages deploy ./docs/.vitepress/dist --project-name=temp-mail-docs --branch production"
   },
   "dependencies": {
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.2"
   },
   "pnpm": {
     "overrides": {

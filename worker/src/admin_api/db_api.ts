@@ -201,9 +201,9 @@ export default {
     initialize: async (c: Context<HonoCustomType>) => {
         // remove all \r and \n characters from the query string
         // split by ; and join with a ;\n
-        const query = DB_INIT_QUERIES.replace(/[\r\n]/g, "")
-            .split(";")
-            .map((query) => query.trim())
+        const query = DB_INIT_QUERIES.split(";")
+            .map((query) => query.replace(/\s+/g, " ").trim())
+            .filter(Boolean)
             .join(";\n");
         await c.env.DB.exec(query);
 
@@ -406,9 +406,9 @@ export default {
         if (version != CONSTANTS.DB_VERSION) {
             // remove all \r and \n characters from the query string
             // split by ; and join with a ;\n
-            const query = DB_INIT_QUERIES.replace(/[\r\n]/g, "")
-                .split(";")
-                .map((query) => query.trim())
+            const query = DB_INIT_QUERIES.split(";")
+                .map((query) => query.replace(/\s+/g, " ").trim())
+                .filter(Boolean)
                 .join(";\n");
             await c.env.DB.exec(query);
             // Update the version in the settings table
